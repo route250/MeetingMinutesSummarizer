@@ -53,4 +53,10 @@ def process_audio():
 
 if __name__ == '__main__':
     port = 5007
-    app.run(host='0.0.0.0', port=port, debug=True)
+    ssl_key='.certs/server.key'
+    ssl_cert='.certs/server.crt'
+    if os.path.exists(ssl_key) and os.path.exists(ssl_cert):
+        ssl_context=(ssl_cert,ssl_key)
+    else:
+        ssl_context=None
+    app.run(host='0.0.0.0', port=port, ssl_context=ssl_context, debug=True)
