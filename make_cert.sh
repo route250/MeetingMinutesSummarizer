@@ -15,6 +15,6 @@ openssl req -out $DIR/server.csr -key $DIR/server.key -new -subj "$SUBJ"
 cat <<'__EOT__' >$DIR/SAN.txt
 subjectAltName = DNS:192.168.1.26
 __EOT__
-openssl x509 -req -days 3650 -signkey $DIR/server.key -in $DIR/server.csr -out $DIR/server.crt -extfile $DIR/SAN.txt
+openssl x509 -req -days 3650 -signkey $DIR/server.key -in $DIR/server.csr -out $DIR/server.crt # -extfile $DIR/SAN.txt
 
 
