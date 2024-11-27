@@ -8,7 +8,7 @@ class UIController {
         this.summaryArea = document.getElementById('summaryArea');
         
         this.isRecording = false;
-        this.lastTranscript = '';
+        this.lastResults = [];
         this.lastSummaryUpdate = Date.now();
         this.hasNewContent = false;
 
@@ -34,25 +34,53 @@ class UIController {
         this.startButton.textContent = '音声認識開始';
     }
 
-    updateTranscriptUI(finalTranscript, interimTranscript) {
-        if (finalTranscript) {
-            // 最後の改行を除去して、新しい行を追加
-            const newTranscript = finalTranscript.trim();
-            if (newTranscript) {
-                if( this.lastTranscript ) {
-                    this.lastTranscript += ' '+newTranscript
-                } else {
-                    this.lastTranscript = newTranscript
-                }
-                this.hasNewContent = true;
-            } else if( finalTranscript=='\n' && this.lastTranscript && !this.lastTranscript.endsWith('\n') ){
-                this.lastTranscript += '\n'
+    updateUIForRecognitonState(st) {
+        if( this.isRecording ) {
+            if( st==1 ) {
+                this.speechStatusDiv.textContent = '音声認識: sound';
+            } else if( st==2 ) {
+                this.speechStatusDiv.textContent = '音声認識: speech';
+            } else {
+                this.speechStatusDiv.textContent = '音声認識: silent';
             }
         }
-        // 暫定認識結果を一時的に表示
-        const displayText = this.lastTranscript + (interimTranscript ? ' '+interimTranscript : '');
-        this.transcriptArea.value = displayText;
-        // テキストエリアを最下部にスクロール
+    }
+
+    getConfidenceClass(confidence, isFinal) {
+        if (!isFinal) return 'text-interim';
+        if (confidence >= 0.8) return 'text-high-confidence';
+        if (confidence >= 0.5) return 'text-medium-confidence';
+        return 'text-low-confidence';
+    }
+
+    updateTranscriptUI(results) {
+        // 確定テキストを更新
+        for (const result of results) {
+            if (result.isFinal) {
+                this.lastResults.push(result);
+                this.hasNewContent = true;
+            }
+        }
+
+        // HTMLを生成
+        let html = '';
+        
+        // 確定済みテキストを表示
+        for (const result of this.lastResults) {
+            const confidenceClass = this.getConfidenceClass(result.confidence, result.isFinal);
+            html += `<span class="${confidenceClass}">${result.text}</span> `;
+        }
+
+        // 未確定テキストを表示（最新の未確定テキストのみ）
+        const interimResults = results.filter(r => !r.isFinal);
+        for( const result of interimResults ) {
+            const confidenceClass = this.getConfidenceClass(result.confidence, result.isFinal);
+            html += `<span class="${confidenceClass}">${result.text}</span>`;
+        }
+
+        this.transcriptArea.innerHTML = html;
+
+        // 最下部にスクロール
         this.transcriptArea.scrollTop = this.transcriptArea.scrollHeight;
     }
 
@@ -74,7 +102,7 @@ class UIController {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ 
-                        text: this.transcriptArea.value,
+                        text: this.transcriptArea.textContent,
                         type: 'summary'
                     })
                 });

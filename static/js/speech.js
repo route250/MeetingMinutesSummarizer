@@ -2,8 +2,9 @@ class SpeechRecognitionHandler {
     constructor() {
         this.recognition = null;
         this.isListening = false;
-        this.lastResultIndex = 0;  // 追加: 最後に処理した結果のインデックスを追跡
-        this.finalTranscript = ''; // 追加: 最終的なテキストを保持
+        this.final_map = {};
+        this.onsound = false;
+        this.onspeech = false;
         this.initializeSpeechRecognition();
     }
 
@@ -26,14 +27,17 @@ class SpeechRecognitionHandler {
 
     setupRecognitionEvents() {
         this.recognition.onstart = () => {
-            this.lastResultIndex = 0;  // 認識開始時にインデックスをリセット
             window.uiController.updateUIForRecordingStart();
         };
 
         this.recognition.onend = () => {
+            console.log('#onend')
             if (this.isListening) {
                 // 意図的な停止でない場合は再開する
-                window.uiController.updateTranscriptUI('\n','')
+                window.uiController.updateTranscriptUI([])
+                this.final_map = {};
+                this.onsound = false;
+                this.onspeech = false;
                 this.recognition.start();
             } else {
                 window.uiController.updateUIForRecordingEnd();
@@ -44,9 +48,32 @@ class SpeechRecognitionHandler {
             this.handleRecognitionResult(event);
         };
 
+        this.recognition.onnomatch = (event) => {
+            console.log('## nomatch')
+        };
+
+        this.recognition.onsoundstart = (event) => {
+            this.onsound = true;
+            this.handleRecognitionStatus();
+        };
+        this.recognition.onsoundend = (event) => {
+            this.onsound = false;
+            this.handleRecognitionStatus();
+        };
+        this.recognition.onpeechstart = (event) => {
+            this.onspeech = true;
+            this.handleRecognitionStatus();
+        };
+        this.recognition.onspeechend = (event) => {
+            this.onspeech = false;
+            this.handleRecognitionStatus();
+        };
+
         this.recognition.onerror = (event) => {
             // no-speech エラーは無視（一時的な無音を検出しただけなので）
-            if (event.error !== 'no-speech') {
+            if (event.error == 'no-speech') {
+                console.log('## no-speech')
+            } else {
                 console.error('音声認識エラー:', event.error);
                 window.uiController.updateStatusForError(event.error);
             }
@@ -76,24 +103,28 @@ class SpeechRecognitionHandler {
     }
 
     handleRecognitionResult(event) {
-        let finalTranscript = '';
-        let interimTranscript = '';
-        // for( let i=0; i<event.results.length;i++) {
-        //     console.log( '##'+i+':'+event.results[i][0].transcript)
-        // }
+        let results = [];
 
         // 新しい結果のみを処理
-        for (let i = this.lastResultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-            if (event.results[i].isFinal) {
-                finalTranscript += ' ' + transcript; // 追加: finalTranscriptに追加
-                this.lastResultIndex = i + 1;  // 最後に処理した結果のインデックスを更新
-            } else {
-                interimTranscript += transcript;
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+            if( !this.final_map[i] ) {
+                const result = event.results[i];
+                results.push({
+                    text: result[0].transcript.trim(),
+                    isFinal: result.isFinal,
+                    confidence: result[0].confidence
+                });
+                if( result.isFinal ) {
+                    this.final_map[i] = true;
+                }
             }
         }
 
-        window.uiController.updateTranscriptUI(finalTranscript, interimTranscript);
+        window.uiController.updateTranscriptUI(results);
+    }
+
+    handleRecognitionStatus() {
+        window.uiController.updateUIForRecognitonState( this.onspeech ? 2 : this.onsound ? 1: 0 );
     }
 }
 

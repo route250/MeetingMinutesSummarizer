@@ -4,6 +4,10 @@
     --accent-color: #2c3e50;
     --error-color: #e74c3c;
     --success-color: #2ecc71;
+    --text-high-confidence: #000000;
+    --text-medium-confidence: #444444;
+    --text-low-confidence: #666666;
+    --text-interim: #999999;
 }
 
 body {
@@ -83,7 +87,7 @@ h2 {
     flex-direction: column;
 }
 
-textarea {
+textarea, .transcript-area {
     flex: 1;
     min-height: 400px;
     padding: 15px;
@@ -91,13 +95,35 @@ textarea {
     border-radius: 8px;
     font-size: 14px;
     line-height: 1.6;
-    resize: none;
     background-color: white;
+}
+
+.transcript-area {
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.text-high-confidence {
+    color: var(--text-high-confidence);
+}
+
+.text-medium-confidence {
+    color: var(--text-medium-confidence);
+}
+
+.text-low-confidence {
+    color: var(--text-low-confidence);
+}
+
+.text-interim {
+    color: var(--text-interim);
 }
 
 #summaryArea {
     border-color: var(--accent-color);
     background-color: var(--secondary-color);
+    resize: none;
 }
 
 button {
