@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>議事録自動生成システム</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header class="header">
+        <h1>議事録自動生成システム</h1>
+        <button id="startButton">音声認識開始</button>
+        <div class="status-container">
+            <div id="status" class="status-item">待機中...</div>
+            <div id="speechStatus" class="status-item">音声認識: 停止中</div>
+            <div id="llmStatus" class="status-item">LLM: 待機中</div>
+        </div>
+    </header>
+    <div class="container">
+        <div class="column">
+            <h2>音声認識結果:</h2>
+            <textarea id="transcriptArea" readonly></textarea>
+        </div>
+        <div class="column">
+            <h2>生成された議事録:</h2>
+            <textarea id="summaryArea" readonly></textarea>
+        </div>
+    </div>
+
+    <script src="/static/js/ui.js"></script>
+    <script src="/static/js/speech.js"></script>
+</body>
+</html>
