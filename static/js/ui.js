@@ -10,7 +10,7 @@ class UIController {
         this.isRecording = false;
         this.lastResults = [];
         this.lastSummaryUpdate = Date.now();
-        this.hasNewContent = false;
+        this.lastText = ''
 
         // 15秒ごとに議事録更新をチェック
         setInterval(() => this.checkForSummaryUpdate(), 15000);
@@ -58,7 +58,6 @@ class UIController {
         for (const result of results) {
             if (result.isFinal) {
                 this.lastResults.push(result);
-                this.hasNewContent = true;
             }
         }
 
@@ -85,13 +84,14 @@ class UIController {
     }
 
     async checkForSummaryUpdate() {
-        if (!this.hasNewContent) return;
-
+        const currentText = this.transcriptArea.textContent
+        if( this.lastText == currentText ) {
+            return;
+        }
         const currentTime = Date.now();
         if (currentTime - this.lastSummaryUpdate >= 15000) {
             this.lastSummaryUpdate = currentTime;
-            this.hasNewContent = false;
-            
+            this.lastText = currentText
             try {
                 this.llmStatusDiv.textContent = 'LLM: 処理中';
                 this.llmStatusDiv.classList.add('processing');
@@ -102,7 +102,7 @@ class UIController {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ 
-                        text: this.transcriptArea.textContent,
+                        text: currentText,
                         type: 'summary'
                     })
                 });
