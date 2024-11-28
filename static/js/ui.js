@@ -84,7 +84,7 @@ class UIController {
     }
 
     async checkForSummaryUpdate() {
-        const currentText = this.transcriptArea.textContent
+        const currentText = this.transcriptArea.textContent.trim()
         if( this.lastText == currentText ) {
             return;
         }
