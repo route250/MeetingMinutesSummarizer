@@ -38,13 +38,24 @@ class SpeechRecognitionHandler {
 
         this.recognition.onend = () => {
             console.log('# on_end')
+            const idxs = Object.keys(this.interm_map).sort();
+            if( idxs.length>0 ) {
+                let results = [];
+                for( const idx of idxs ) {
+                    const text = this.interm_map[idx].text;
+                    const confidence = this.interm_map[idx].confidence;
+                    results.push({text: text, isFinal: true, confidence: confidence });
+                }
+                window.uiController.updateTranscriptUI(results);
+            }
+            window.uiController.updateTranscriptUI([])
+            this.final_map = {};
+            this.interm_map = {};
+            this.onsound = false;
+            this.onspeech = false;
             if (this.isListening) {
                 // 意図的な停止でない場合は再開する
-                window.uiController.updateTranscriptUI([])
-                this.final_map = {};
-                this.interm_map = {};
-                this.onsound = false;
-                this.onspeech = false;
+                console.log('# resume')
                 this.recognition.start();
             } else {
                 window.uiController.updateUIForRecordingEnd();
@@ -131,6 +142,7 @@ class SpeechRecognitionHandler {
                 });
                 if( result.isFinal ) {
                     this.final_map[i] = true;
+                    delete this.interm_map[i]
                 }
             }
         }
