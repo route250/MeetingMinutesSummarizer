@@ -3,6 +3,7 @@ class SpeechRecognitionHandler {
         this.recognition = null;
         this.isListening = false;
         this.final_map = {};
+        this.interm_map = {};
         this.onsound = false;
         this.onspeech = false;
         this.initializeSpeechRecognition();
@@ -27,15 +28,21 @@ class SpeechRecognitionHandler {
 
     setupRecognitionEvents() {
         this.recognition.onstart = () => {
+            console.log('# on_start')
+            this.final_map = {};
+            this.interm_map = {};
+            this.onsound = false;
+            this.onspeech = false;
             window.uiController.updateUIForRecordingStart();
         };
 
         this.recognition.onend = () => {
-            console.log('#onend')
+            console.log('# on_end')
             if (this.isListening) {
                 // 意図的な停止でない場合は再開する
                 window.uiController.updateTranscriptUI([])
                 this.final_map = {};
+                this.interm_map = {};
                 this.onsound = false;
                 this.onspeech = false;
                 this.recognition.start();
@@ -49,7 +56,7 @@ class SpeechRecognitionHandler {
         };
 
         this.recognition.onnomatch = (event) => {
-            console.log('## nomatch')
+            console.log('## on_nomatch')
         };
 
         this.recognition.onsoundstart = (event) => {
@@ -72,7 +79,7 @@ class SpeechRecognitionHandler {
         this.recognition.onerror = (event) => {
             // no-speech エラーは無視（一時的な無音を検出しただけなので）
             if (event.error == 'no-speech') {
-                console.log('## no-speech')
+                console.log('## on_error no-speech')
             } else {
                 console.error('音声認識エラー:', event.error);
                 window.uiController.updateStatusForError(event.error);
@@ -109,10 +116,18 @@ class SpeechRecognitionHandler {
         for (let i = event.resultIndex; i < event.results.length; i++) {
             if( !this.final_map[i] ) {
                 const result = event.results[i];
+                let content = result[0].transcript.trim();
+                let confidence = result[0].confidence;
+                if( content ) {
+                    this.interm_map[i] = { 'text': content, 'confidence': confidence }
+                } else if( i in this.interm_map ) {
+                    content = this.interm_map[i].text
+                    confidence = this.interm_map[i].confidence
+                }
                 results.push({
-                    text: result[0].transcript.trim(),
+                    text: content,
                     isFinal: result.isFinal,
-                    confidence: result[0].confidence
+                    confidence: confidence
                 });
                 if( result.isFinal ) {
                     this.final_map[i] = true;
