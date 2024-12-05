@@ -21,9 +21,11 @@ def process_audio():
     try:
         data = request.get_json()
         text = data.get('text', '')
+        mode = data.get('mode', 'minutes')  # デフォルトは議事録モード
         
-        # 議事録生成用のプロンプトを作成
-        prompt = """
+        if mode == 'minutes':
+            # 議事録生成用のプロンプト
+            prompt = """
 以下の会議の音声認識テキストから、重要なポイントを抽出して議事録を作成してください。
 フォーマットは以下の通りです：
 
@@ -36,11 +38,22 @@ def process_audio():
 
 音声認識テキスト：
 """
+            system_role = "あなたは会議の議事録作成の専門家です。"
+            
+        else:  # translation mode
+            # 翻訳用のプロンプト
+            prompt = """
+以下のテキストを自然な日本語に翻訳してください。
+文脈を考慮し、分かりやすい日本語になるよう心がけてください。
+
+原文：
+"""
+            system_role = "あなたは優秀な翻訳者です。自然で分かりやすい日本語訳を提供します。"
         
         response = client.chat.completions.create(
             model="gpt-4o-mini", #モデルは gpt-4o-miniを使って下さいよ！
             messages=[
-                {"role": "system", "content": "あなたは会議の議事録作成の専門家です。"},
+                {"role": "system", "content": system_role},
                 {"role": "user", "content": prompt + text}
             ]
         )

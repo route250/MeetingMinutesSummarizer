@@ -1,25 +1,32 @@
 class UIController {
     constructor() {
         this.startButton = document.getElementById('startButton');
-        this.statusDiv = document.getElementById('status');
         this.speechStatusDiv = document.getElementById('speechStatus');
         this.llmStatusDiv = document.getElementById('llmStatus');
         this.transcriptArea = document.getElementById('transcriptArea');
         this.summaryArea = document.getElementById('summaryArea');
+        this.modeRadios = document.getElementsByName('mode');
         
         this.isRecording = false;
         this.lastResults = [];
         this.lastSummaryUpdate = Date.now();
-        this.lastText = ''
+        this.lastText = '';
 
         // 15秒ごとに議事録更新をチェック
         setInterval(() => this.checkForSummaryUpdate(), 15000);
     }
 
+    getCurrentMode() {
+        for (const radio of this.modeRadios) {
+            if (radio.checked) {
+                return radio.value;
+            }
+        }
+        return 'minutes'; // デフォルトは議事録モード
+    }
+
     updateUIForRecordingStart() {
         this.isRecording = true;
-        this.statusDiv.textContent = '録音中';
-        this.statusDiv.classList.add('recording');
         this.speechStatusDiv.textContent = '音声認識: 実行中';
         this.speechStatusDiv.classList.add('active');
         this.startButton.textContent = '停止';
@@ -27,8 +34,6 @@ class UIController {
 
     updateUIForRecordingEnd() {
         this.isRecording = false;
-        this.statusDiv.textContent = '待機中';
-        this.statusDiv.classList.remove('recording');
         this.speechStatusDiv.textContent = '音声認識: 停止中';
         this.speechStatusDiv.classList.remove('active');
         this.startButton.textContent = '音声認識開始';
@@ -103,20 +108,20 @@ class UIController {
                     },
                     body: JSON.stringify({ 
                         text: currentText,
-                        type: 'summary'
+                        mode: this.getCurrentMode()
                     })
                 });
 
                 const data = await response.json();
                 if (data.error) {
-                    console.error('議事録生成エラー:', data.error);
+                    console.error('処理エラー:', data.error);
                     this.llmStatusDiv.textContent = 'LLM: エラー';
                 } else {
                     this.updateSummaryUI(data.response);
                     this.llmStatusDiv.textContent = 'LLM: 待機中';
                 }
             } catch (error) {
-                console.error('議事録生成中にエラーが発生:', error);
+                console.error('処理中にエラーが発生:', error);
                 this.llmStatusDiv.textContent = 'LLM: エラー';
             } finally {
                 this.llmStatusDiv.classList.remove('processing');
@@ -130,14 +135,12 @@ class UIController {
     }
 
     updateStatusForError(error) {
-        this.statusDiv.textContent = `エラー: ${error}`;
         this.speechStatusDiv.textContent = '音声認識: エラー';
         this.llmStatusDiv.textContent = 'LLM: 停止';
     }
 
     showBrowserSupportError() {
         this.startButton.style.display = 'none';
-        this.statusDiv.textContent = 'ブラウザ非対応';
         this.speechStatusDiv.textContent = '音声認識: 非対応';
         this.llmStatusDiv.textContent = 'LLM: 停止';
     }

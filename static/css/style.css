@@ -28,6 +28,64 @@ body {
     margin-bottom: 20px;
 }
 
+.recognition-controls, .summary-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 10px 0;
+    margin-bottom: 20px;
+    flex-wrap: nowrap;
+}
+
+.recognition-controls h2, .summary-controls h2 {
+    margin: 0;
+    white-space: nowrap;
+}
+
+.mode-select {
+    display: flex;
+    gap: 10px;
+    padding: 5px;
+    background-color: var(--secondary-color);
+    border-radius: 20px;
+    margin: 0;
+    white-space: nowrap;
+}
+
+.mode-select label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+
+.mode-select input[type="radio"] {
+    margin: 0;
+}
+
+#languageSelect {
+    padding: 8px 12px;
+    font-size: 14px;
+    border: 2px solid var(--primary-color);
+    border-radius: 20px;
+    background-color: white;
+    color: var(--accent-color);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+}
+
+#languageSelect:hover {
+    border-color: #357abd;
+}
+
+#languageSelect:focus {
+    outline: none;
+    border-color: #357abd;
+    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+}
+
 h1 {
     color: var(--primary-color);
     font-size: 1.8em;
@@ -39,15 +97,7 @@ h1 {
 h2 {
     color: var(--accent-color);
     font-size: 1.3em;
-    margin-top: 10px;
-    margin-bottom: 15px;
     font-weight: 500;
-}
-
-.status-container {
-    display: flex;
-    gap: 10px;
-    align-items: center;
 }
 
 .status-item {
@@ -58,6 +108,7 @@ h2 {
     transition: all 0.3s ease;
     background-color: var(--secondary-color);
     margin: 0;
+    white-space: nowrap;
 }
 
 #status.recording {
@@ -138,6 +189,7 @@ button {
     transition: all 0.3s ease;
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     margin: 0;
+    white-space: nowrap;
 }
 
 button:hover {
