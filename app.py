@@ -21,24 +21,23 @@ def process_audio():
     try:
         data = request.get_json()
         text = data.get('text', '')
-        mode = data.get('mode', 'minutes')  # デフォルトは議事録モード
+        mode = data.get('mode', 'summary')  # デフォルトは要約モード
         
-        if mode == 'minutes':
-            # 議事録生成用のプロンプト
+        if mode == 'off':
+            return jsonify({"response": ""})
+            
+        if mode == 'summary':
+            # 要約生成用のプロンプト
             prompt = """
-以下の会議の音声認識テキストから、重要なポイントを抽出して議事録を作成してください。
-フォーマットは以下の通りです：
+以下の音声認識テキストを簡潔に要約してください。
+重要なポイントを箇条書きで記載し、できるだけ簡潔にまとめてください。
 
-# 議事録
-## 主要な議題と決定事項
+# 要約
 - 重要なポイントを箇条書きで記載
-
-## 詳細な議論内容
-- 議論の流れや重要な発言を要約して記載
 
 音声認識テキスト：
 """
-            system_role = "あなたは会議の議事録作成の専門家です。"
+            system_role = "あなたは音声テキストの要約の専門家です。重要なポイントを簡潔にまとめます。"
             
         else:  # translation mode
             # 翻訳用のプロンプト

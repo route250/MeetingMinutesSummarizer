@@ -8,13 +8,42 @@ class UIController {
         this.modeRadios = document.getElementsByName('mode');
         
         this.isRecording = false;
-        this.lastResults = [];
+        this.fragment = [];
         this.lastSummaryUpdate = Date.now();
         this.lastText = '';
 
         // 15秒ごとに議事録更新をチェック
         setInterval(() => this.checkForSummaryUpdate(), 15000);
+
+        // ウィンドウリサイズ時のテキストエリア調整を削除
+        // window.addEventListener('resize', () => this.adjustTextAreaHeights());
+        // 初期化時にも高さを調整（DOMの読み込み完了後）を削除
+        // setTimeout(() => this.adjustTextAreaHeights(), 0);
     }
+
+    /*
+    adjustTextAreaHeights() {
+        const headerHeight = document.querySelector('.header').offsetHeight;
+        const controlsHeight = document.querySelector('.recognition-controls').offsetHeight;
+        const summaryControlsHeight = document.querySelector('.summary-controls').offsetHeight;
+        const windowHeight = window.innerHeight;
+        const bodyPadding = 20; // body padding
+        const containerGap = 10; // container gap
+        const textAreaPadding = 15; // textarea padding
+        const borderWidth = 4; // border width (2px * 2)
+        
+        // 利用可能な高さを計算（余白や境界線を考慮）
+        const availableHeight = windowHeight - headerHeight - Math.max(controlsHeight, summaryControlsHeight) 
+            - (bodyPadding * 2) - containerGap - (textAreaPadding * 2) - borderWidth - 15; // 5pxの追加マージン
+        
+        // テキストエリアに高さを設定
+        if (availableHeight > 0) {
+            console.log( 'h:'+availableHeight )
+            this.transcriptArea.style.height = `${availableHeight}px`;
+            this.summaryArea.style.height = `${availableHeight}px`;
+        }
+    }
+    */
 
     getCurrentMode() {
         for (const radio of this.modeRadios) {
@@ -22,7 +51,7 @@ class UIController {
                 return radio.value;
             }
         }
-        return 'minutes'; // デフォルトは議事録モード
+        return 'summary'; // デフォルトは要約モード
     }
 
     updateUIForRecordingStart() {
@@ -62,27 +91,27 @@ class UIController {
         // 確定テキストを更新
         for (const result of results) {
             if (result.isFinal) {
-                this.lastResults.push(result);
+                const span = document.createElement('span');
+                span.className = this.getConfidenceClass(result.confidence, result.isFinal);
+                span.textContent = result.text + ' ';
+                this.fragment.push(span);
             }
         }
-
-        // HTMLを生成
-        let html = '';
-        
-        // 確定済みテキストを表示
-        for (const result of this.lastResults) {
-            const confidenceClass = this.getConfidenceClass(result.confidence, result.isFinal);
-            html += `<span class="${confidenceClass}">${result.text}</span> `;
+        const fragment = document.createDocumentFragment();
+        for (const result of this.fragment) {
+            fragment.appendChild(result)
         }
-
-        // 未確定テキストを表示（最新の未確定テキストのみ）
-        const interimResults = results.filter(r => !r.isFinal);
-        for( const result of interimResults ) {
-            const confidenceClass = this.getConfidenceClass(result.confidence, result.isFinal);
-            html += `<span class="${confidenceClass}">${result.text}</span>`;
+        for (const result of results) {
+            if (!result.isFinal) {
+                const span = document.createElement('span');
+                span.className = this.getConfidenceClass(result.confidence, result.isFinal);
+                span.textContent = result.text + ' ';
+                fragment.appendChild(span);
+            }
         }
-
-        this.transcriptArea.innerHTML = html;
+        // 既存の内容を置き換え
+        this.transcriptArea.innerHTML = ''; // 必要に応じてリセット
+        this.transcriptArea.appendChild(fragment);
 
         // 最下部にスクロール
         this.transcriptArea.scrollTop = this.transcriptArea.scrollHeight;
@@ -93,6 +122,13 @@ class UIController {
         if( this.lastText == currentText ) {
             return;
         }
+
+        const currentMode = this.getCurrentMode();
+        if (currentMode === 'off') {
+            this.llmStatusDiv.textContent = 'LLM: OFF';
+            return;
+        }
+
         const currentTime = Date.now();
         if (currentTime - this.lastSummaryUpdate >= 15000) {
             this.lastSummaryUpdate = currentTime;
@@ -108,7 +144,7 @@ class UIController {
                     },
                     body: JSON.stringify({ 
                         text: currentText,
-                        mode: this.getCurrentMode()
+                        mode: currentMode
                     })
                 });
 

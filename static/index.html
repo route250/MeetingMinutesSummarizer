@@ -7,9 +7,6 @@
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-    <header class="header">
-        <h1>議事録自動生成システム</h1>
-    </header>
     <div class="container">
         <div class="column">
             <div class="recognition-controls">
@@ -29,8 +26,12 @@
             <div class="summary-controls">
                 <div class="mode-select">
                     <label>
-                        <input type="radio" name="mode" value="minutes" checked>
-                        議事録
+                        <input type="radio" name="mode" value="off" checked>
+                        OFF
+                    </label>
+                    <label>
+                        <input type="radio" name="mode" value="summary">
+                        要約
                     </label>
                     <label>
                         <input type="radio" name="mode" value="translation">
