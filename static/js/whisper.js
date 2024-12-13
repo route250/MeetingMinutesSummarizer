@@ -37,25 +37,12 @@ function initializeWebSocket() {
     });
 }
 
-// Blobをbase64に変換
-async function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            const base64data = reader.result.split(',')[1];
-            resolve(base64data);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-}
-
 // 音声録音の設定
 const constraints = {
     audio: {
-        echoCancellation: true,
+        echoCancellation: false,
         noiseSuppression: true,
-        autoGainControl: true,
+        autoGainControl: false,
         channelCount: 1,
         sampleRate: 16000
     }
@@ -79,9 +66,8 @@ startButton.addEventListener('click', async () => {
                 try {
                     // WebSocketを通じてサーバーに音声データを送信
                     if (socket && socket.connected) {
-                        // BlobデータをBase64に変換
-                        const base64data = await blobToBase64(event.data);
-                        socket.emit('audio_data', base64data);
+                        // Blobデータをそのまま送信
+                        socket.emit('audio_data', event.data);
                     }
                 } catch (error) {
                     console.error('音声データの送信エラー:', error);
