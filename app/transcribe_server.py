@@ -1,27 +1,21 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_socketio import SocketIO, emit
-from multiprocessing import Process, Pipe
-import subprocess
-import os
-import numpy as np
-from numpy.typing import NDArray
-from pydub import AudioSegment
-import io
-from whisper_transcribe import MlxWhisperProcess
-import tempfile
-from typing import cast, Union, Any
-import threading
-from queue import Queue
+import sys,os
 import time
 import asyncio
+from typing import cast
+import threading
 from dotenv import load_dotenv
 from openai import OpenAI
+
+from flask import Flask, request, jsonify, send_from_directory
+from flask_socketio import SocketIO, emit
+
+from whisper_transcribe import MlxWhisperProcess
 
 # Flask-SocketIOのrequestオブジェクトの型を拡張
 class SocketIORequest:
     sid: str
 
-def xxxx():
+def create_app():
     app = Flask(__name__)
     #app.config['SECRET_KEY'] = 'secret!'
     socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, async_mode='threading')
@@ -191,7 +185,7 @@ def main():
         # else:
         #     ssl_context=None
         ssl_context=None
-        app,socketio = xxxx()
+        app,socketio = create_app()
         socketio.run(app, host='0.0.0.0', port=port, ssl_context=ssl_context, debug=True)
     except Exception as ex:
         print(f"{ex}")
