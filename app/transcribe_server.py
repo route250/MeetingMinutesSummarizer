@@ -1,4 +1,4 @@
-import sys,os
+import sys, os
 import time
 import asyncio
 from typing import cast
@@ -10,6 +10,7 @@ from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit
 
 from whisper_transcribe import MlxWhisperProcess
+from text_processing import summarize_text,translate_text
 
 # Flask-SocketIOのrequestオブジェクトの型を拡張
 class SocketIORequest:
@@ -21,9 +22,9 @@ def create_app():
     socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60, async_mode='threading')
 
     # 各接続ごとに専用のwhisper_procを管理
-    client_procs:dict[str,MlxWhisperProcess] = {}
+    client_procs: dict[str, MlxWhisperProcess] = {}
     # 各クライアントのスレッドを管理
-    client_threads:dict[str,threading.Thread] = {}
+    client_threads: dict[str, threading.Thread] = {}
 
     def read_transcription(client_id: str, whisper_proc: MlxWhisperProcess):
         """whisper_procからの結果を読み取ってクライアントに送信するタスク"""
@@ -90,7 +91,7 @@ def create_app():
             emit('error', {'error': str(ex)})
 
     @socketio.on('audio_data')
-    def handle_audio_data(blob:bytes):
+    def handle_audio_data(blob: bytes):
         """WebSocketで受信した音声データを該当クライアントのwhisper_procに送信"""
         try:
             socket_request = cast(SocketIORequest, request)
@@ -116,11 +117,8 @@ def create_app():
             print(f"Error handling disconnect for client {client_id}: {str(e)}")
             emit('error', {'error': str(e)})
 
-    # OpenAI クライアントの初期化（環境変数から自動的にAPI keyを取得）
-    client = OpenAI()
-
     @app.route('/process_audio', methods=['POST'])
-    def process_audio():
+    def process_audio_route():
         try:
             data = request.get_json()
             text = data.get('text', '')
@@ -130,43 +128,16 @@ def create_app():
                 return jsonify({"response": ""})
                 
             if mode == 'summary':
-                # 要約生成用のプロンプト
-                prompt = """
-    以下の音声認識テキストを簡潔に要約してください。
-    重要なポイントを箇条書きで記載し、できるだけ簡潔にまとめてください。
-
-    # 要約
-    - 重要なポイントを箇条書きで記載
-
-    音声認識テキスト：
-    """
-                system_role = "あなたは音声テキストの要約の専門家です。重要なポイントを簡潔にまとめます。"
-                
+                answer = summarize_text(text)
             else:  # translation mode
-                # 翻訳用のプロンプト
-                prompt = """
-    以下のテキストを自然な日本語に翻訳してください。
-    文脈を考慮し、分かりやすい日本語になるよう心がけてください。
-
-    原文：
-    """
-                system_role = "あなたは優秀な翻訳者です。自然で分かりやすい日本語訳を提供します。"
+                answer = translate_text(text)
             
-            response = client.chat.completions.create(
-                model="gpt-4o-mini", #モデルは gpt-4o-miniを使って下さいよ！
-                messages=[
-                    {"role": "system", "content": system_role},
-                    {"role": "user", "content": prompt + text}
-                ]
-            )
-            
-            answer = response.choices[0].message.content
             return jsonify({"response": answer})
         
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    return app,socketio
+    return app, socketio
 
 def main():
     try:
@@ -184,8 +155,8 @@ def main():
         #     ssl_context=(ssl_cert,ssl_key)
         # else:
         #     ssl_context=None
-        ssl_context=None
-        app,socketio = create_app()
+        ssl_context = None
+        app, socketio = create_app()
         socketio.run(app, host='0.0.0.0', port=port, ssl_context=ssl_context, debug=True)
     except Exception as ex:
         print(f"{ex}")
