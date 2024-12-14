@@ -1,0 +1,215 @@
+:root {
+    --primary-color: #4a90e2;
+    --secondary-color: #f5f5f5;
+    --accent-color: #2c3e50;
+    --error-color: #e74c3c;
+    --success-color: #2ecc71;
+    --text-high-confidence: #000000;
+    --text-medium-confidence: #444444;
+    --text-low-confidence: #666666;
+    --text-interim: #999999;
+}
+
+body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 10px;
+    background-color: #ffffff;
+    color: var(--accent-color);
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    box-sizing: border-box;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+    margin-bottom: 5px;
+}
+
+.recognition-controls, .summary-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+    margin-bottom: 5px;
+    flex-wrap: nowrap;
+}
+
+.recognition-controls h2, .summary-controls h2 {
+    margin: 0;
+    white-space: nowrap;
+}
+
+.mode-select {
+    display: flex;
+    gap: 10px;
+    padding: 0px;
+    background-color: var(--secondary-color);
+    border-radius: 20px;
+    margin: 0;
+    white-space: nowrap;
+    font-size: 80%;
+}
+
+.mode-select label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+}
+
+.mode-select input[type="radio"] {
+    margin: 0;
+}
+
+#languageSelect {
+    padding: 2px 12px;
+    font-size: 14px;
+    border: 2px solid var(--primary-color);
+    border-radius: 20px;
+    background-color: white;
+    color: var(--accent-color);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+}
+
+#languageSelect:hover {
+    border-color: #357abd;
+}
+
+#languageSelect:focus {
+    outline: none;
+    border-color: #357abd;
+    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
+}
+
+h1 {
+    color: var(--primary-color);
+    font-size: 1.8em;
+    font-weight: 300;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+h2 {
+    color: var(--accent-color);
+    font-size: 1.3em;
+    font-weight: 500;
+}
+
+.status-item {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: 0.9em;
+    transition: all 0.3s ease;
+    background-color: var(--secondary-color);
+    margin: 0;
+    white-space: nowrap;
+}
+
+#status.recording {
+    background-color: var(--error-color);
+    color: white;
+}
+
+#speechStatus.active {
+    background-color: var(--success-color);
+    color: white;
+}
+
+#llmStatus.processing {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.container {
+    display: flex;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.column {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+
+textarea, .transcript-area {
+    flex: 1;
+    padding: 15px;
+    border: 2px solid var(--primary-color);
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.6;
+    background-color: white;
+    overflow-y: auto;
+    min-height: 0;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+.transcript-area {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.text-high-confidence {
+    color: var(--text-high-confidence);
+}
+
+.text-medium-confidence {
+    color: var(--text-medium-confidence);
+}
+
+.text-low-confidence {
+    color: var(--text-low-confidence);
+}
+
+.text-interim {
+    color: var(--text-interim);
+}
+
+#summaryArea {
+    border-color: var(--accent-color);
+    background-color: var(--secondary-color);
+    resize: none;
+}
+
+button {
+    padding: 5px 15px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 20px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    margin: 0;
+    white-space: nowrap;
+}
+
+button:hover {
+    background-color: #357abd;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
