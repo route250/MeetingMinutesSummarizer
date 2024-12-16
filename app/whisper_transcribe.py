@@ -20,10 +20,19 @@ import scipy.io.wavfile
 import os
 from logging import getLogger, Logger, StreamHandler, FileHandler, Formatter,  DEBUG as LV_DEBUG, INFO as LV_INFO, WARN as LV_WARN
 
-WHISPER_MODEL_NAME = "mlx-community/whisper-large-v3-turbo"
+WHISPER_MODEL_NAME_LARGE = "mlx-community/whisper-large-v3-turbo"
 #WHISPER_MODEL_NAME = "mlx-community/whisper-tiny.en-mlx-q4"
 #WHISPER_MODEL_NAME = "mlx-community/whisper-base.en-mlx-q4"
-WHISPER_MODEL_NAME = "mlx-community/whisper-small.en-mlx-q4"
+WHISPER_MODEL_NAME_EN = "mlx-community/whisper-small.en-mlx-q4"
+
+def lang_to_model(lang)->tuple[str,str]:
+    if lang.startswith('en'):
+        return WHISPER_MODEL_NAME_EN,'en'
+    elif lang.startswith('ja'):
+        return WHISPER_MODEL_NAME_LARGE,'jp'
+    else:
+        return WHISPER_MODEL_NAME_LARGE,'jp'
+
 SAMPLE_RATE=16000
 _pcm_counter = 0
 
@@ -92,11 +101,11 @@ class Seg:
         return {'seek': self.seek, 'start':self.start, 'end':self.end, 'isFixed':self.isFixed, 'text': self.text,
                  'prob':self.avg_logprob, 'comp':self.compression_ratio, 'no_speech':self.no_speech_prob }
 
-def transcribe(audio:np.ndarray, *, prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
+def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_NAME_EN, lang:str='en', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
     t0 = time.time()
     result = mlx_whisper.transcribe(
-        audio, path_or_hf_repo=WHISPER_MODEL_NAME,
-        language='en',
+        audio, path_or_hf_repo=model,
+        language=lang,
         prompt=prompt,
         #hallucination_silence_threshold=0.5,
         no_speech_threshold=0.2,
@@ -122,16 +131,29 @@ class MlxWhisperProcess:
         self._transcribe_queue:Queue = Queue()
         self._audio_queue:Queue = Queue()
         self._logfile:str|None = logfile
+        self._language = 'off'
+
+    def set_language(self, lang: str):
+        """言語設定を更新する"""
+        self._language = lang
+        if self._whisper_process and self._whisper_process.is_alive():
+            # 言語設定を更新するためにキューに特別なメッセージを送信
+            print(f"qqq {lang}")
+            self._audio_queue.put(('set_language', lang))
+        else:
+            print(f"xxx {lang}")
 
     def append_audio(self, data: bytes):
-        if len(data)>0 and self._whisper_process and self._whisper_process.is_alive():
+        if isinstance(data,bytes) and len(data)>0 and self._whisper_process and self._whisper_process.is_alive():
             self._audio_queue.put(data)
+            time.sleep(0.01)
 
     def close_audio(self):
         if self._whisper_process and self._whisper_process.is_alive():
             self._audio_queue.put(b'')
+            time.sleep(0.01)
 
-    async def read(self) ->tuple[list[str],list[str]]|None:
+    async def read(self,*,timeout:float=3.0) ->tuple[list[str],list[str]]|None:
         while not self._transcribe_closed:
             try:
                 data = self._transcribe_queue.get_nowait()
@@ -147,8 +169,10 @@ class MlxWhisperProcess:
 
     def start(self):
         # start whisper
-        self._whisper_process = Process(target=self._th_transcribe, name='mlxwhisper', args=(self._audio_queue,self._transcribe_queue, self._logfile))
-        self._whisper_process.start()
+        if self._whisper_process is None or not self._whisper_process.is_alive():
+            print(f"[Whisper]start process")
+            self._whisper_process = Process(target=self._th_transcribe, name='mlxwhisper', args=(self._audio_queue,self._transcribe_queue, self._language, self._logfile))
+            self._whisper_process.start()
 
     @staticmethod
     def segment_split( previous:list[Seg], current:list[Seg], secs ) ->int:
@@ -168,7 +192,7 @@ class MlxWhisperProcess:
         else:
             return cur_size-3
 
-    def _th_transcribe(self, audio_queue:Queue, stdout:Queue, logfile:str|None=None):
+    def _th_transcribe(self, audio_queue:Queue, stdout:Queue, lang:str, logfile:str|None=None):
         run:bool = True
         try:
             logger = getLogger( __name__ )
@@ -204,6 +228,7 @@ class MlxWhisperProcess:
                 try:
                     # copy input audio
                     while run and ffmpeg_process and ffmpeg_process.stderr:
+                        time.sleep(0.01)
                         b = ffmpeg_process.stderr.readline()
                         if b and not ffmpeg_closed:
                             logger.info(f"[FFMPEG] {b.decode()}")
@@ -217,18 +242,29 @@ class MlxWhisperProcess:
         
             #--------------------
             #--------------------
+            model,lang = lang_to_model(lang)
+            print(f"[xx] Language changed to {model} {lang}")
             def to_ffmpeg():
                 logger.info("[CP]start")
                 try:
                     # copy input audio
                     while run and ffmpeg_process and ffmpeg_process.stdin:
+                        time.sleep(0.01)
                         if not audio_queue.empty():
                             data = audio_queue.get()
-                            if len(data)>0:
+                            if isinstance(data, tuple) and data[0] == 'set_language':
+                                # 言語設定の更新
+                                nonlocal model
+                                nonlocal lang
+                                model,lang = lang_to_model(data[1])
+                                logger.info(f"[CP] Language changed to {model} {lang}")
+                                print(f"[CP] Language changed to {model} {lang}")
+                            elif isinstance(data,bytes) and len(data)>0:
                                 ffmpeg_process.stdin.write( data )
+                                ffmpeg_process.stdin.flush()
                             else:
                                 logger.info("[CP]close")
-                                print(f"[cp]close")
+                                print(f"[CP]close")
                                 ffmpeg_closed = True
                                 ffmpeg_process.stdin.close()
                                 break
@@ -257,9 +293,10 @@ class MlxWhisperProcess:
             blanktime = SAMPLE_RATE *0.8
             #
             while run and ffmpeg_process and ffmpeg_process.stdout:
+                time.sleep(0.01)
                 # get audio segment
                 buf:bytes = ffmpeg_process.stdout.read(read_size)
-                if len(buf)>0:
+                if len(buf)>0 and model is not None and lang is not None:
                     # convert bytes to np.ndarray
                     audio_seg = np.frombuffer(buf,dtype=np.int16).astype(np.float32) / 32768.0
                     sz=len(audio_seg)
@@ -268,7 +305,7 @@ class MlxWhisperProcess:
                     buffer_len+=sz
                     # transcrib
                     prompt = ' '.join( [s.text for s in prev_segments] ) if len(prev_segments)>0 else None
-                    segments = transcribe(buffer[:buffer_len], prompt=prompt, logger=logger)
+                    segments = transcribe(buffer[:buffer_len], model=model,lang=lang, prompt=prompt, logger=logger)
                 else:
                     segments = []
 
@@ -333,6 +370,7 @@ class MlxWhisperProcess:
             logger.info(f"[Whisper] End")
 
     def stop(self):
+        self._transcribe_closed = True
         try:
             if self._whisper_process and self._whisper_process.is_alive():
                 self._whisper_process.terminate()

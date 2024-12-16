@@ -1,9 +1,6 @@
 from flask import request, jsonify
 from openai import OpenAI
 
-# OpenAI クライアントの初期化（環境変数から自動的にAPI keyを取得）
-client = OpenAI()
-
 def summarize_text(text: str) -> str:
     """音声認識テキストを要約する"""
     prompt = """
@@ -16,7 +13,8 @@ def summarize_text(text: str) -> str:
 音声認識テキスト：
 """
     system_role = "あなたは音声テキストの要約の専門家です。重要なポイントを簡潔にまとめます。"
-    
+    # OpenAI クライアントの初期化（環境変数から自動的にAPI keyを取得）
+    client = OpenAI()
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -36,7 +34,8 @@ def translate_text(text: str) -> str:
 原文：
 """
     system_role = "あなたは優秀な翻訳者です。自然で分かりやすい日本語訳を提供します。"
-    
+    # OpenAI クライアントの初期化（環境変数から自動的にAPI keyを取得）
+    client = OpenAI()
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[

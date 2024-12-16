@@ -1,11 +1,13 @@
 class WhisperController {
     constructor() {
         this.mediaRecorder = null;
+        this.audioContext = null;
         this.audioChunks = [];
         this.stream = null;
         this.socket = null;
         this.recog_lang = 'en';
         this.fragment = [];
+        this.isListening = false; // 音声認識がアクティブかどうかを追跡
 
         // DOM要素の取得
         this.status = document.getElementById('speechStatus');
@@ -26,11 +28,11 @@ class WhisperController {
     setupUiHandler() {
         document.getElementById('languageSelect').addEventListener('change', (event) => {
             const newLang = event.target.value;
-            if (this.isListening && this.recognition !== null ) {
-                // 音声認識中の場合は一旦停止して再開
-                //this.recognition.stop();
-                this.recog_lang = newLang;
-                //this.recognition.start();
+            this.recog_lang = newLang;
+            // 言語変更をサーバーに通知
+            if (this.socket && this.socket.connected) {
+                const selectedMode = document.querySelector('input[name="mode"]:checked').value;
+                this.socket.emit('configure', {'mode':selectedMode, 'lang':this.recog_lang}) ;
             }
         });    
         document.getElementById('startButton').onclick = () => {
@@ -42,16 +44,42 @@ class WhisperController {
                 }
             });
         };
+
+        // モード選択に応じた設定
+        document.querySelectorAll('input[name="mode"]').forEach((radio) => {
+            radio.addEventListener('change', async (event) => {
+                const mode = event.target.value;
+                if (mode === 'conversation') {
+                    this.constraints.audio.echoCancellation = true;
+                } else {
+                    this.constraints.audio.echoCancellation = false;
+                }
+                // モード変更をサーバーに通知
+                if (this.socket && this.socket.connected) {
+                    this.socket.emit('configure', {'mode':selectedMode, 'lang':this.recog_lang});
+                }
+                // 音声認識がアクティブな場合のみストリームを再取得
+                if (this.isListening && this.stream) {
+                    this.stream.getTracks().forEach(track => track.stop());
+                    this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
+                }
+            });
+        });
     }
+
     // WebSocket接続を初期化
     initializeWebSocket() {
+        // 現在選択されているモードを取得
+        const selectedMode = document.querySelector('input[name="mode"]:checked').value;
+
         this.socket = io(window.location.origin, {
             path: '/socket.io',
-            transports: ['websocket']
+            transports: ['websocket'],
         });
 
         this.socket.on('connect', () => {
             console.log('WebSocket接続が確立されました');
+            this.socket.emit('configure', {'mode':selectedMode, 'lang':this.recog_lang});
             window.uiController.updateUIForRecordingStart();
         });
 
@@ -70,10 +98,13 @@ class WhisperController {
             }
             window.uiController.updateTranscriptUI(results);
         });
-
+        this.socket.on('audio_stream', (data) => {
+            this.playAudio(data.audio);
+        });
         this.socket.on('connect_error', (error) => {
             console.error('接続エラー:', error);
             window.uiController.updateStatusForError(error);
+            window.uiController.updateUIForRecordingEnd();
         });
 
         this.socket.on('disconnect', () => {
@@ -81,9 +112,23 @@ class WhisperController {
             window.uiController.updateUIForRecordingEnd();
         });
     }
-
+    async playAudio(audioData) {
+        try {
+            if (!this.audioContext) {
+                return;
+            }
+            const audioBuffer = await this.audioContext.decodeAudioData(audioData);
+            const source = this.audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(this.audioContext.destination);
+            source.start();
+        } catch (error) {
+            console.error('Error decoding or playing audio:', error);
+        }
+    }
     async startRecording() {
         try {
+            this.isListening = true; // 音声認識をアクティブに設定
             // WebSocket接続を初期化
             this.initializeWebSocket();
             
@@ -111,7 +156,13 @@ class WhisperController {
 
             // 1秒ごとにデータを取得するように設定
             this.mediaRecorder.start(1000);
-            
+
+            if (!this.audioContext) {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume();
+            }
         } catch (error) {
             this.handleError(error);
         }
@@ -119,6 +170,7 @@ class WhisperController {
 
     async stopRecording() {
         try {
+            this.isListening = false; // 音声認識を非アクティブに設定
             if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
                 // MediaRecorderを停止する前に最後のデータを送信
                 this.mediaRecorder.stop();
@@ -149,6 +201,7 @@ class WhisperController {
     handleError(error) {
         console.error('エラーが発生しました:', error);
         window.uiController.updateStatusForError(error);
+        window.uiController.updateUIForRecordingEnd();
     }
 
 }

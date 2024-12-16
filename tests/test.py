@@ -1,3 +1,4 @@
+import sys,os
 import asyncio
 import subprocess
 from io import BufferedReader
@@ -6,6 +7,8 @@ import tempfile
 from logging import getLogger, Logger, StreamHandler, FileHandler, Formatter,  DEBUG as LV_DEBUG, INFO as LV_INFO, WARN as LV_WARN
 
 import mlx_whisper
+
+sys.path.append('app')
 from whisper_transcribe import WHISPER_MODEL_NAME, MlxWhisperProcess, transcribe, Seg
 
 async def write_to_tp(tp:MlxWhisperProcess, file_path,chunk,size_limit):
@@ -63,7 +66,7 @@ async def main():
     logger.debug("Starting main function")
     logger.info("Processing file: output.webm")
 
-    file_path = "output.webm"
+    file_path = "tests/testData/output.webm"
     size_limit = 1280*1024
     chunk = 8192
 
