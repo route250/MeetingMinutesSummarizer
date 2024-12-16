@@ -1,5 +1,6 @@
 import sys, os
 import time
+import base64
 import atexit
 import asyncio
 from asyncio import Task
@@ -183,14 +184,23 @@ def create_app():
             emit('error', {'error': str(ex)})
 
     @socketio.on('audio_data')
-    def handle_audio_data(blob: bytes):
+    def handle_audio_data(data: dict):
         """WebSocketで受信した音声データを該当クライアントのwhisper_procに送信"""
         try:
             socket_request = cast(SocketIORequest, request)
             client_id = socket_request.sid
             session = client_sessions.get(client_id)
             if session is not None:
-                session.append_audio(blob)
+                if isinstance(data,dict):
+                    sz = data.get('size')
+                    b64 = data.get('base64')
+                    audio = base64.b64decode(b64) if b64 else None
+                    if audio and sz and len(audio)==sz:
+                        session.append_audio(audio)
+                    else:
+                        print(f"ERROR audio {data}")
+                else:
+                    print(f"ERROR audio {type(data)}")
         except Exception as e:
             print(f"Error handling audio data for client {client_id}: {str(e)}")
             emit('error', {'error': str(e)})

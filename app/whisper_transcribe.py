@@ -13,25 +13,32 @@ import threading
 from threading import Thread
 import numpy as np
 from numpy.typing import NDArray
-import mlx.core as mx
-import mlx_whisper
+
 from typing import Optional
-import scipy.io.wavfile
 import os
 from logging import getLogger, Logger, StreamHandler, FileHandler, Formatter,  DEBUG as LV_DEBUG, INFO as LV_INFO, WARN as LV_WARN
 
-WHISPER_MODEL_NAME_LARGE = "mlx-community/whisper-large-v3-turbo"
-#WHISPER_MODEL_NAME = "mlx-community/whisper-tiny.en-mlx-q4"
-#WHISPER_MODEL_NAME = "mlx-community/whisper-base.en-mlx-q4"
-WHISPER_MODEL_NAME_EN = "mlx-community/whisper-small.en-mlx-q4"
+try:
+    import mlx.core as mx
+    import mlx_whisper
+    USE_MLX_WHISPER:bool = True
+except:
+    USE_MLX_WHISPER:bool = False
+
+WHISPER_MODEL_LARGE = "mlx-community/whisper-large-v3-turbo"
+WHISPER_MODEL_TINY_EN = "mlx-community/whisper-tiny.en-mlx-q4"
+WHISPER_MODEL_BASE_EN = "mlx-community/whisper-base.en-mlx-q4"
+WHISPER_MODEL_SMALL_EN = "mlx-community/whisper-small.en-mlx-q4"
 
 def lang_to_model(lang)->tuple[str,str]:
-    if lang.startswith('en'):
-        return WHISPER_MODEL_NAME_EN,'en'
+    if lang is None or lang.strip()=='' or lang=='off':
+        return WHISPER_MODEL_SMALL_EN,'off'
+    elif lang.startswith('en'):
+        return WHISPER_MODEL_SMALL_EN,'en'
     elif lang.startswith('ja'):
-        return WHISPER_MODEL_NAME_LARGE,'jp'
+        return WHISPER_MODEL_LARGE,'jp'
     else:
-        return WHISPER_MODEL_NAME_LARGE,'jp'
+        return WHISPER_MODEL_LARGE,'jp'
 
 SAMPLE_RATE=16000
 _pcm_counter = 0
@@ -101,7 +108,11 @@ class Seg:
         return {'seek': self.seek, 'start':self.start, 'end':self.end, 'isFixed':self.isFixed, 'text': self.text,
                  'prob':self.avg_logprob, 'comp':self.compression_ratio, 'no_speech':self.no_speech_prob }
 
-def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_NAME_EN, lang:str='en', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
+def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_SMALL_EN, lang:str='en', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
+
+    if not USE_MLX_WHISPER:
+        return []
+
     t0 = time.time()
     result = mlx_whisper.transcribe(
         audio, path_or_hf_repo=model,
@@ -138,10 +149,10 @@ class MlxWhisperProcess:
         self._language = lang
         if self._whisper_process and self._whisper_process.is_alive():
             # 言語設定を更新するためにキューに特別なメッセージを送信
-            print(f"qqq {lang}")
+            print(f"request lang={lang}")
             self._audio_queue.put(('set_language', lang))
         else:
-            print(f"xxx {lang}")
+            print(f"skip lang={lang}")
 
     def append_audio(self, data: bytes):
         if isinstance(data,bytes) and len(data)>0 and self._whisper_process and self._whisper_process.is_alive():
@@ -230,7 +241,7 @@ class MlxWhisperProcess:
                     while run and ffmpeg_process and ffmpeg_process.stderr:
                         time.sleep(0.01)
                         b = ffmpeg_process.stderr.readline()
-                        if b and not ffmpeg_closed:
+                        if b: # and not ffmpeg_closed:
                             logger.info(f"[FFMPEG] {b.decode()}")
                         else:
                             break
@@ -243,10 +254,13 @@ class MlxWhisperProcess:
             #--------------------
             #--------------------
             model,lang = lang_to_model(lang)
-            print(f"[xx] Language changed to {model} {lang}")
+            print(f"[Whisper] Language {model} {lang}")
+            bmodel = model
+            blang = lang
             def to_ffmpeg():
                 logger.info("[CP]start")
                 try:
+                    seq:int = 0
                     # copy input audio
                     while run and ffmpeg_process and ffmpeg_process.stdin:
                         time.sleep(0.01)
@@ -254,14 +268,17 @@ class MlxWhisperProcess:
                             data = audio_queue.get()
                             if isinstance(data, tuple) and data[0] == 'set_language':
                                 # 言語設定の更新
-                                nonlocal model
-                                nonlocal lang
-                                model,lang = lang_to_model(data[1])
-                                logger.info(f"[CP] Language changed to {model} {lang}")
-                                print(f"[CP] Language changed to {model} {lang}")
+                                nonlocal bmodel
+                                nonlocal blang
+                                bmodel,blang = lang_to_model(data[1])
+                                logger.info(f"[CP] Language changed to {bmodel} {blang}")
+                                print(f"[CP] Language changed to {bmodel} {blang}")
                             elif isinstance(data,bytes) and len(data)>0:
                                 ffmpeg_process.stdin.write( data )
-                                ffmpeg_process.stdin.flush()
+                                fname = f'tmp/dump/webm{seq:06d}.webm'
+                                with open( fname, 'wb') as f:
+                                    f.write(data)
+                                seq+=1
                             else:
                                 logger.info("[CP]close")
                                 print(f"[CP]close")
@@ -294,6 +311,11 @@ class MlxWhisperProcess:
             #
             while run and ffmpeg_process and ffmpeg_process.stdout:
                 time.sleep(0.01)
+                if model!=bmodel or lang!=blang:
+                    model = bmodel
+                    lang = blang
+                    logger.info(f"[Whisper] Language {model} {lang}")
+                    print(f"[Whisper] Language {model} {lang}")
                 # get audio segment
                 buf:bytes = ffmpeg_process.stdout.read(read_size)
                 if len(buf)>0 and model is not None and lang is not None:

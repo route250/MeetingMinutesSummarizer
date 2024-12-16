@@ -7,7 +7,6 @@ from threading import Thread
 import wave
 import tempfile
 import numpy as np
-import soundfile as sf
 from text_to_voice import TtsEngine
 from rec_util import audio_to_wave_bytes
 
