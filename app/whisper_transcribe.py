@@ -6,6 +6,7 @@ from typing import NamedTuple
 from io import BytesIO
 from io import BufferedReader
 import subprocess
+from subprocess import Popen
 from multiprocessing import Process, Queue
 from queue import Empty
 from multiprocessing.connection import Connection
@@ -25,7 +26,13 @@ try:
 except:
     USE_MLX_WHISPER:bool = False
 
+# tiny base small medium large
+WHISPER_MODEL_TINY = "mlx-community/whisper-tiny-mlx-q4"
+WHISPER_MODEL_BASE = "mlx-community/whisper-base-mlx-q4"
+WHISPER_MODEL_SMALL = "mlx-community/whisper-small-mlx-q4"
+WHISPER_MODEL_MEDIUM = "mlx-community/whisper-medium-mlx-q4"
 WHISPER_MODEL_LARGE = "mlx-community/whisper-large-v3-turbo"
+
 WHISPER_MODEL_TINY_EN = "mlx-community/whisper-tiny.en-mlx-q4"
 WHISPER_MODEL_BASE_EN = "mlx-community/whisper-base.en-mlx-q4"
 WHISPER_MODEL_SMALL_EN = "mlx-community/whisper-small.en-mlx-q4"
@@ -36,9 +43,9 @@ def lang_to_model(lang)->tuple[str,str]:
     elif lang.startswith('en'):
         return WHISPER_MODEL_SMALL_EN,'en'
     elif lang.startswith('ja'):
-        return WHISPER_MODEL_LARGE,'jp'
+        return WHISPER_MODEL_SMALL,'ja'
     else:
-        return WHISPER_MODEL_LARGE,'jp'
+        return WHISPER_MODEL_SMALL,'ja'
 
 SAMPLE_RATE=16000
 _pcm_counter = 0
@@ -135,6 +142,61 @@ def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_SMALL_EN, lang:str='
         ]
     return []
 
+def popen_ffmpeg() ->Popen:
+    cmdline = [
+            "ffmpeg",
+            "-err_detect", "ignore_err","-ignore_unknown",
+            "-i", "-",
+            "-loglevel", "error",
+            "-threads", "0",
+            "-f", "s16le",
+            "-ac", "1",
+            "-acodec", "pcm_s16le",
+            "-ar", str(SAMPLE_RATE),
+            "-"
+    ]
+    bufsz = 1800
+    ffmpeg_process = subprocess.Popen(cmdline,bufsize=bufsz, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return ffmpeg_process
+
+def check_audio(audio:bytes,size:int) ->str:
+    try:
+        proc:Popen = popen_ffmpeg()
+        if proc is None:
+            return "can not start ffmpeg"
+        else:
+            try:
+                ok=False
+                err='can not convert audio'
+                if proc.stdin:
+                    proc.stdin.write(audio)
+                    proc.stdin.close()
+                    if proc.stdout:
+                        output = proc.stdout.read()
+                        if isinstance(output,bytes) and len(output)>0:
+                            aa = np.frombuffer(output,dtype=np.int16)
+                            if isinstance(aa,np.ndarray) and len(aa)>0:
+                                err = ''
+                                ok = True
+                            else:
+                                err = f"invalid audio length {len(aa)}!={size}"
+                    if proc.stderr:
+                        lines = proc.stderr.read()
+                        if len(lines)>0:
+                            err = lines.decode().strip()
+                            if "File ended prematurely at pos" in err:
+                                err=""
+                if err:
+                    return err
+                if ok:
+                    return ''
+                return 'Can not convert audio'
+            finally:
+                proc.kill()
+    except Exception as ex:
+        traceback.print_exc()
+        return f"Exception:{str(ex)}"
+
 class MlxWhisperProcess:
     def __init__(self, *, logfile:str|None=None):
         self._transcribe_closed:bool = False
@@ -154,8 +216,9 @@ class MlxWhisperProcess:
         else:
             print(f"skip lang={lang}")
 
-    def append_audio(self, data: bytes):
+    def append_audio(self, seq:int, typ:str, data: bytes):
         if isinstance(data,bytes) and len(data)>0 and self._whisper_process and self._whisper_process.is_alive():
+            #print(f"[AUdio]{seq},{typ}")
             self._audio_queue.put(data)
             time.sleep(0.01)
 
@@ -218,19 +281,7 @@ class MlxWhisperProcess:
             #--------------------
             # start ffmpeg
             #--------------------
-            cmdline = [
-            "ffmpeg",
-            "-i", "-",
-            "-loglevel", "error",
-            "-threads", "0",
-            "-f", "s16le",
-            "-ac", "1",
-            "-acodec", "pcm_s16le",
-            "-ar", str(SAMPLE_RATE),
-            "-"
-            ]
-            bufsz = 8192
-            ffmpeg_process = subprocess.Popen(cmdline, bufsize=bufsz, pipesize=bufsz, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            ffmpeg_process = popen_ffmpeg()
 
             #--------------------
             #--------------------
@@ -240,8 +291,9 @@ class MlxWhisperProcess:
                     # copy input audio
                     while run and ffmpeg_process and ffmpeg_process.stderr:
                         time.sleep(0.01)
-                        b = ffmpeg_process.stderr.readline()
+                        b = ffmpeg_process.stderr.read()
                         if b: # and not ffmpeg_closed:
+                            print(f"[FFMPEG]{b.docode()}")
                             logger.info(f"[FFMPEG] {b.decode()}")
                         else:
                             break
@@ -273,15 +325,17 @@ class MlxWhisperProcess:
                                 bmodel,blang = lang_to_model(data[1])
                                 logger.info(f"[CP] Language changed to {bmodel} {blang}")
                                 print(f"[CP] Language changed to {bmodel} {blang}")
-                            elif isinstance(data,bytes) and len(data)>0:
+                            elif isinstance(data,bytes) and len(data)>0 :
                                 ffmpeg_process.stdin.write( data )
                                 fname = f'tmp/dump/webm{seq:06d}.webm'
+                                os.makedirs('tmp/dump',exist_ok=True)
                                 with open( fname, 'wb') as f:
                                     f.write(data)
                                 seq+=1
                             else:
                                 logger.info("[CP]close")
                                 print(f"[CP]close")
+                                nonlocal ffmpeg_closed
                                 ffmpeg_closed = True
                                 ffmpeg_process.stdin.close()
                                 break
@@ -318,6 +372,9 @@ class MlxWhisperProcess:
                     print(f"[Whisper] Language {model} {lang}")
                 # get audio segment
                 buf:bytes = ffmpeg_process.stdout.read(read_size)
+                if len(buf)==0 and not ffmpeg_closed and not ffmpeg_process.stdout.closed:
+                    time.sleep(1.0)
+                    continue
                 if len(buf)>0 and model is not None and lang is not None:
                     # convert bytes to np.ndarray
                     audio_seg = np.frombuffer(buf,dtype=np.int16).astype(np.float32) / 32768.0
@@ -398,8 +455,10 @@ class MlxWhisperProcess:
                 self._whisper_process.terminate()
                 for i in range(10):
                     time.sleep(0.2)
-                    if not self._whisper_process.is_alive():
+                    if self._whisper_process is None or not self._whisper_process.is_alive():
                         return
                 self._whisper_process.kill()
+        except Exception as ex:
+            print(f"[Whisp]stop {str(ex)}")
         finally:
             self._whisper_process = None

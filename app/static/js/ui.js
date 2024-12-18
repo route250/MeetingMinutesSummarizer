@@ -128,6 +128,7 @@ class UIController {
             this.llmStatusDiv.textContent = 'LLM: OFF';
             return;
         }
+        return;
 
         const currentTime = Date.now();
         if (currentTime - this.lastSummaryUpdate >= 15000) {

@@ -1,6 +1,7 @@
 import sys, os
 import time
 import base64
+from io import BytesIO
 import atexit
 import asyncio
 from asyncio import Task
@@ -12,13 +13,19 @@ from openai import OpenAI
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_socketio import SocketIO, emit
 
-from whisper_transcribe import MlxWhisperProcess
+from whisper_transcribe import check_audio, MlxWhisperProcess
 from text_processing import summarize_text,translate_text
-from bot_server import Bot
+from bot_server import Bot, VoiceRes
 
 # Flask-SocketIOのrequestオブジェクトの型を拡張
 class SocketIORequest:
     sid: str
+
+def calculate_xor_checksum(data: bytes) -> int:
+    checksum = 0
+    for byte in data:
+        checksum ^= byte  # 各バイトをXOR演算
+    return checksum
 
 def create_app():
     global_status:bool = True
@@ -52,6 +59,7 @@ def create_app():
             self._t2:Task|None = None
             self.mode = 'off'  # デフォルトモード
             self.lang = 'off'  # デフォルト言語
+            self._accept_audio:str|None = None
 
         async def start(self):
             self._run=True
@@ -71,9 +79,14 @@ def create_app():
             if self.vot_proc:
                 self.vot_proc.set_mode(mode)
 
-        def append_audio(self,blob:bytes):
+        def append_audio(self,seq:int,typ:str,audio:bytes) ->str:
+            if self._accept_audio is None or self._accept_audio!='':
+                self._accept_audio = check_audio(audio, 16000)
+            if self._accept_audio is not None and self._accept_audio!='':
+                return self._accept_audio
             if self.whisper_proc:
-                self.whisper_proc.append_audio(blob)
+                self.whisper_proc.append_audio(seq,typ,audio)
+            return ''
 
         async def _task_stt(self):
             print(f"[SESSION]{self.client_id}:stt start")
@@ -91,7 +104,7 @@ def create_app():
                                 print(f"Sending fixed text to {self.client_id}: {fixed_text} {temp_text}")
                                 socketio.emit('transcription', {'text': ' '.join(fixed_text), 'tmp': ' '.join(temp_text)}, to=self.client_id)
                             if fixed_text is not None and fixed_text!='':
-                                await self.vot_proc.put(fixed_text)
+                                await self.vot_proc.put(fixed_text,temp_text)
                     except Exception as ex:
                         print(f"Error in read_transcription loop for client {self.client_id}: {str(ex)}")
                     await asyncio.sleep(0.1)  # 短い待機時間を入れてCPU使用率を抑える
@@ -110,8 +123,11 @@ def create_app():
                 while self._run and self.client_id in client_sessions:  # クライアントが接続中の間だけ実行
                     try:
                         cmd, restext, voice = await self.vot_proc.get(timeout=0.2)
-                        if cmd==1 and restext and voice:
-                            socketio.emit('audio_stream', {'audio': voice}, to=self.client_id)
+                        if restext != '' or len(voice)>0:
+                            if cmd==VoiceRes.CMD_APPEND:
+                                socketio.emit('audio_stream', {'text': restext, 'audio': voice}, to=self.client_id)
+                            elif cmd==VoiceRes.CMD_ALL:
+                                socketio.emit('result_text', {'text': restext, 'audio': voice}, to=self.client_id)
                     except Exception as ex:
                         print(f"Error in read_transcription loop for client {self.client_id}: {str(ex)}")
                     await asyncio.sleep(0.1)  # 短い待機時間を入れてCPU使用率を抑える
@@ -183,27 +199,87 @@ def create_app():
             print(f"Error in handle_configure: {str(ex)}")
             emit('error', {'error': str(ex)})
 
-    @socketio.on('audio_data')
-    def handle_audio_data(data: dict):
+    @socketio.on('audio_bin')
+    def handle_audio_bin(data):
         """WebSocketで受信した音声データを該当クライアントのwhisper_procに送信"""
+        msg = 'invalid data'
+        try:
+            socket_request = cast(SocketIORequest, request)
+            client_id = socket_request.sid
+            session = client_sessions.get(client_id)
+            if session is not None:
+                if isinstance(data,bytes):
+                    seq = 0
+                    typ = ''
+                    msg = session.append_audio(seq,typ,data)
+        except Exception as e:
+            msg = f"Error handling audio data for client {client_id}: {str(e)}"
+        if msg:
+            print(f"{msg}")
+            emit('audio_error', {'error': msg})
+
+    @socketio.on('audio_b64')
+    def handle_audio_b64(data):
+        """WebSocketで受信した音声データを該当クライアントのwhisper_procに送信"""
+        msg = 'invalid data'
+        try:
+            socket_request = cast(SocketIORequest, request)
+            client_id = socket_request.sid
+            session = client_sessions.get(client_id)
+            if session is not None:
+                if isinstance(data,str):
+                    seq = 0
+                    typ = ''
+                    buf:bytes = base64.b64decode(data)
+                    msg = session.append_audio(seq,typ,buf)
+        except Exception as e:
+            msg = f"Error handling audio data for client {client_id}: {str(e)}"
+        if msg:
+            print(f"{msg}")
+            emit('audio_error', {'error': msg})
+
+    @socketio.on('audio_dict')
+    def handle_audio_dict(data):
+        """WebSocketで受信した音声データを該当クライアントのwhisper_procに送信"""
+        msg = 'invalid data'
         try:
             socket_request = cast(SocketIORequest, request)
             client_id = socket_request.sid
             session = client_sessions.get(client_id)
             if session is not None:
                 if isinstance(data,dict):
-                    sz = data.get('size')
-                    b64 = data.get('base64')
-                    audio = base64.b64decode(b64) if b64 else None
-                    if audio and sz and len(audio)==sz:
-                        session.append_audio(audio)
-                    else:
-                        print(f"ERROR audio {data}")
-                else:
-                    print(f"ERROR audio {type(data)}")
+                    seq = data.get('seq',-1)
+                    typ = data.get('type','')
+                    b64 = data.get('base64','')
+                    buf:bytes = base64.b64decode(b64)
+                    msg = session.append_audio(seq,typ,buf)
         except Exception as e:
-            print(f"Error handling audio data for client {client_id}: {str(e)}")
-            emit('error', {'error': str(e)})
+            msg = f"Error handling audio data for client {client_id}: {str(e)}"
+        if msg:
+            print(f"{msg}")
+            emit('audio_error', {'error': msg})
+
+    # 音声チャンクの保存
+    @app.route('/audio_post', methods=['POST'])
+    def upload_audio_chunk():
+        msg = 'invalid data'
+        try:
+            client_id = request.form.get('sid')
+            audio_chunk = request.files.get('audio_chunk')
+            if client_id is not None and audio_chunk is not None:
+                session = client_sessions.get(client_id)
+                if session is not None:
+                    buf = audio_chunk.read()
+                    seq = 0
+                    typ = ''
+                    msg = session.append_audio(seq,typ,buf)
+                    if msg=='':
+                        return jsonify({'message': 'Chunk saved'}), 200
+        except Exception as e:
+            msg = f"Error handling audio data for client {client_id}: {str(e)}"
+        if msg:
+            print(f"{msg}")
+        return jsonify({'error': msg}), 400
 
     @socketio.on('disconnect')
     def handle_disconnect():

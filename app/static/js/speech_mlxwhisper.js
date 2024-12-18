@@ -1,6 +1,76 @@
+function getAllSupportedMimeTypes(...mediaTypes) {
+    if (!mediaTypes.length) mediaTypes.push('video', 'audio')
+    const CONTAINERS = ['webm', 'ogg', 'mp3', 'mp4', 'x-matroska', '3gpp', '3gpp2', '3gp2', 'quicktime', 'mpeg', 'aac', 'flac', 'x-flac', 'wave', 'wav', 'x-wav', 'x-pn-wav', 'not-supported']
+    const CODECS = ['vp9', 'vp9.0', 'vp8', 'vp8.0', 'avc1', 'av1', 'h265', 'h.265', 'h264', 'h.264', 'opus', 'vorbis', 'pcm', 'aac', 'mpeg', 'mp4a', 'rtx', 'red', 'ulpfec', 'g722', 'pcmu', 'pcma', 'cn', 'telephone-event', 'not-supported']
+    
+    return [...new Set(
+      CONTAINERS.flatMap(ext =>
+          mediaTypes.flatMap(mediaType => [
+            `${mediaType}/${ext}`,
+          ]),
+      ),
+    ), ...new Set(
+      CONTAINERS.flatMap(ext =>
+        CODECS.flatMap(codec =>
+          mediaTypes.flatMap(mediaType => [
+            // NOTE: 'codecs:' will always be true (false positive)
+            `${mediaType}/${ext};codecs=${codec}`,
+          ]),
+        ),
+      ),
+    ), ...new Set(
+      CONTAINERS.flatMap(ext =>
+        CODECS.flatMap(codec1 =>
+        CODECS.flatMap(codec2 =>
+          mediaTypes.flatMap(mediaType => [
+            `${mediaType}/${ext};codecs="${codec1}, ${codec2}"`,
+          ]),
+        ),
+        ),
+      ),
+    )].filter(variation => MediaRecorder.isTypeSupported(variation))
+  }
+  
+  // To get all mime types, use: getAllSupportedMimeTypes()
+  
+  console.log('Video mime types:')
+  console.log(getAllSupportedMimeTypes('video'))
+  
+  console.log('Audio mime types:')
+  console.log(getAllSupportedMimeTypes('audio'))
+  /*
+    'webm;codecs=opus', 'audio/webm;codecs=pcm',
+    'audio/webm;codecs="opus, opus"', 'audio/webm;codecs="opus, pcm"', 'audio/webm;codecs="pcm, opus"', 'audio/webm;codecs="pcm, pcm"',
+    'audio/mp4;codecs=opus',
+    'audio/mp4;codecs="opus, opus"']
+   */
+  /*
+    audio/mp4", "audio/mp4;codecs=avc1", "audio/mp4;codecs=mp4a", "audio/mp4;codecs=\"avc1, avc1\"", "audio/mp4;codecs=\"avc1, mp4a\"", "audio/mp4;codecs=\"mp4a, avc1\"", "audio/mp4;codecs=\"mp4a, mp4a\""
+  */
+
+function calculateXORChecksum(data) {
+    let checksum = 0;
+    for (let i = 0; i < data.length; i++) {
+        checksum ^= data[i]; // 各バイトをXOR演算
+    }
+    return checksum;
+}
+// Blobをbase64に変換
+async function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64data = reader.result.split(',')[1];
+            resolve(base64data);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
 class WhisperController {
     constructor() {
         this.mediaRecorder = null;
+        this.media_seq = 0;
         this.audioContext = null;
         this.audioChunks = [];
         this.stream = null;
@@ -34,7 +104,9 @@ class WhisperController {
                 const selectedMode = document.querySelector('input[name="mode"]:checked').value;
                 this.socket.emit('configure', {'mode':selectedMode, 'lang':this.recog_lang}) ;
             }
-        });    
+        });
+        this.recog_lang = document.getElementById('languageSelect').value;
+
         document.getElementById('startButton').onclick = () => {
             window.uiController.handleStartButtonClick((shouldStart) => {
                 if (shouldStart) {
@@ -49,20 +121,23 @@ class WhisperController {
         document.querySelectorAll('input[name="mode"]').forEach((radio) => {
             radio.addEventListener('change', async (event) => {
                 const mode = event.target.value;
+                let upd = false
                 if (mode === 'conversation') {
+                    upd = !this.constraints.audio.echoCancellation
                     this.constraints.audio.echoCancellation = true;
                 } else {
+                    upd = this.constraints.audio.echoCancellation
                     this.constraints.audio.echoCancellation = false;
                 }
                 // モード変更をサーバーに通知
                 if (this.socket && this.socket.connected) {
-                    this.socket.emit('configure', {'mode':selectedMode, 'lang':this.recog_lang});
+                    this.socket.emit('configure', {'mode':mode, 'lang':this.recog_lang});
                 }
-                // 音声認識がアクティブな場合のみストリームを再取得
-                if (this.isListening && this.stream) {
-                    this.stream.getTracks().forEach(track => track.stop());
-                    this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
-                }
+                // // 音声認識がアクティブな場合のみストリームを再取得
+                // if (this.isListening && this.stream) {
+                //     this.stream.getTracks().forEach(track => track.stop());
+                //     this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
+                // }
             });
         });
     }
@@ -96,9 +171,29 @@ class WhisperController {
             }
             window.uiController.updateTranscriptUI(results);
         });
+        this.socket.on('audio_error', (data) => {
+            const msg = data.error
+            console.log('socketio recv audio',msg);
+            this.stopRecording()
+        });
         this.socket.on('audio_stream', (data) => {
             console.log('socketio recv audio');
             this.playAudio(data.audio);
+        });
+        this.socket.on('audio_stream', (data) => {
+            console.log('socketio recv audio');
+            this.playAudio(data.audio);
+        });
+        this.socket.on('result_text', (data) => {
+            console.log('socketio recv audio');
+            const text = data.text;
+            const audio = data.audio;
+            if( audio ) {
+                this.playAudio(audio);
+            }
+            if( text ) {
+                window.uiController.updateSummaryUI(text);
+            }
         });
         this.socket.on('connect_error', (error) => {
             console.log('socketio connect error',error);
@@ -139,21 +234,48 @@ class WhisperController {
             
             // マイクへのアクセスを要求
             this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
-            
             // MediaRecorderの設定
-            this.mediaRecorder = new MediaRecorder(this.stream, { mimeType: 'audio/webm' });
+            const options = {mimeType: 'audio/webm;codecs=opus'};
+            options.mimeType = 'audio/webm';
+            //options.mimeType = 'audio/webm;codecs=pcm'
+            options.mimeType = 'audio/mp4;codecs=opus'
+            this.mediaRecorder = new MediaRecorder(this.stream);
 
             this.mediaRecorder.ondataavailable = async (event) => {
                 if (this.isListening && event.data.size > 0) {
                     try {
                         // WebSocketを通じてサーバーに音声データを送信
                         if (this.socket && this.socket.connected) {
-                            // Blobデータをそのまま送信
-                            const audio_bin = await event.data.arrayBuffer()
-                            const u8 = new Uint8Array(audio_bin)
-                            const b64 = btoa(String.fromCharCode.apply(null,u8))
-                            //console.log('Blob size:', event.data.size, 'type:', event.data.type, 'sz',audio_bin.byteLength );
-                            this.socket.emit('audio_data', { 'size':event.data.size, 'base64':b64} );
+                            const seq = this.media_seq++;
+                            const type = event.data.type;
+                            const send = 1;
+                            console.log('send mode',send)
+                            if( send==1 ) {
+                                // ダイレクト
+                                this.socket.emit('audio_bin', event.data )
+                            } else if( send==3 ) {
+                                const audio_bin = await event.data.arrayBuffer()
+                                const u8 = new Uint8Array(audio_bin)
+                                const b64 = btoa(String.fromCharCode.apply(null,u8))
+                                this.socket.emit('audio_b64', b64 )
+                            } else if( send==4 ) {
+                                const b64 = await blobToBase64(event.data)
+                                this.socket.emit('audio_b64', b64 )
+                            } else if( send==5 ) {
+                                const formData = new FormData();
+                                formData.append('sid', this.socket.id )
+                                formData.append('audio_chunk', event.data, `chunk_${seq}.webm`);
+                                fetch('/audio_post', { method: 'POST', body: formData })
+                                  .then(response => response.json())
+                                  .then(data => console.log('サーバーからの応答:', data))
+                                  .catch(error => console.error('エラー:', error));
+                            } else if( send==6 ) {
+                                this.socket.emit('audio_data', {
+                                    'seq':seq,
+                                    'type': type,
+                                    'base64': blobToBase64(event.data),
+                                } );
+                            }
                         }
                     } catch (error) {
                         console.error('音声データの送信エラー:', error);
@@ -174,6 +296,7 @@ class WhisperController {
 
     async stopRecording() {
         try {
+            console.log('call stop')
             this.isListening = false; // 音声認識を非アクティブに設定
             if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
                 // MediaRecorderを停止する前に最後のデータを送信
@@ -182,18 +305,15 @@ class WhisperController {
                 await new Promise(resolve => {
                     this.mediaRecorder.addEventListener('stop', resolve, { once: true });
                 });
-                
-                // 音声ストリームを停止
-                if (this.stream) {
-                    this.stream.getTracks().forEach(track => track.stop());
-                }
-                
-                // WebSocket切断
-                if (this.socket) {
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    this.socket.disconnect();
-                }
-                
+            }
+            // 音声ストリームを停止
+            if (this.stream) {
+                this.stream.getTracks().forEach(track => track.stop());
+            }
+            // WebSocket切断
+            if (this.socket) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                this.socket.disconnect();
             }
         } catch (error) {
             this.handleError(error);
