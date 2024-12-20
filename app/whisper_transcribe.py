@@ -155,8 +155,8 @@ def popen_ffmpeg() ->Popen:
             "-ar", str(SAMPLE_RATE),
             "-"
     ]
-    bufsz = 1800
-    ffmpeg_process = subprocess.Popen(cmdline,bufsize=bufsz, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    bufsz = 512
+    ffmpeg_process = subprocess.Popen(cmdline,bufsize=bufsz,pipesize=bufsz, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return ffmpeg_process
 
 def check_audio(audio:bytes,size:int) ->str:
@@ -254,6 +254,9 @@ class MlxWhisperProcess:
             return -1
         pre_size = len(previous)
         cur_size = len(current)
+        bx = secs-(current[-1].end) if cur_size>0 else 0
+        if bx>1.2:
+            return cur_size-1
         regex = r'[a-zA-Z][.!?][ ]*$'
         if cur_size <=1:
             return -1
@@ -268,6 +271,7 @@ class MlxWhisperProcess:
 
     def _th_transcribe(self, audio_queue:Queue, stdout:Queue, lang:str, logfile:str|None=None):
         run:bool = True
+        acnt:int = 0
         try:
             logger = getLogger( __name__ )
             if logfile is not None:
@@ -326,6 +330,8 @@ class MlxWhisperProcess:
                                 logger.info(f"[CP] Language changed to {bmodel} {blang}")
                                 print(f"[CP] Language changed to {bmodel} {blang}")
                             elif isinstance(data,bytes) and len(data)>0 :
+                                if seq==0:
+                                    print(f"[CP]write data")
                                 ffmpeg_process.stdin.write( data )
                                 fname = f'tmp/dump/webm{seq:06d}.webm'
                                 os.makedirs('tmp/dump',exist_ok=True)
@@ -371,7 +377,12 @@ class MlxWhisperProcess:
                     logger.info(f"[Whisper] Language {model} {lang}")
                     print(f"[Whisper] Language {model} {lang}")
                 # get audio segment
+                if acnt==0:
+                    print(f"[Whisper]wait audio")
                 buf:bytes = ffmpeg_process.stdout.read(read_size)
+                if acnt==0:
+                    print(f"[Whisper]started audio")
+                acnt+=1
                 if len(buf)==0 and not ffmpeg_closed and not ffmpeg_process.stdout.closed:
                     time.sleep(1.0)
                     continue
@@ -390,8 +401,8 @@ class MlxWhisperProcess:
 
                 out1 = []
                 out2 = []
-                if segments:
-                    split = MlxWhisperProcess.segment_split(prev_segments,segments,buffer_len*SAMPLE_RATE)
+                if segments and len(segments)>0:
+                    split = MlxWhisperProcess.segment_split(prev_segments,segments,buffer_len/SAMPLE_RATE)
                     logstr = '\n'.join( [f"  {x.json()}" for x in segments])
                     logger.debug( f"# transcribe results split:{split}\n{logstr}")
 

@@ -69,7 +69,7 @@ body {
     margin: 0;
 }
 
-#languageSelect {
+#recogLang {
     padding: 2px 12px;
     font-size: 14px;
     border: 2px solid var(--primary-color);
@@ -81,11 +81,11 @@ body {
     white-space: nowrap;
 }
 
-#languageSelect:hover {
+#recogLang:hover {
     border-color: #357abd;
 }
 
-#languageSelect:focus {
+#recogLang:focus {
     outline: none;
     border-color: #357abd;
     box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.2);
@@ -121,9 +121,35 @@ h2 {
     color: white;
 }
 
-#speechStatus.active {
-    background-color: var(--success-color);
+.status-button {
+    padding: 4px 10px;  /* paddingを調整 */
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    background-color: var(--primary-color);
     color: white;
+    border: none;
+    border-radius: 20px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    margin: 0;
+    white-space: nowrap;
+    height: 28px;  /* 高さを固定 */
+    line-height: 1.2;  /* 行の高さを調整 */
+}
+
+.status-button.active {
+    background-color: var(--success-color);
+}
+
+.status-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.status-button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
 }
 
 #llmStatus.processing {
@@ -188,28 +214,14 @@ textarea, .transcript-area {
     resize: none;
 }
 
-button {
-    padding: 5px 15px;
-    font-size: 14px;
-    font-weight: 500;
-    cursor: pointer;
-    background-color: var(--primary-color);
-    color: white;
-    border: none;
-    border-radius: 20px;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-    margin: 0;
-    white-space: nowrap;
+/* チェックボックスとラベルのスタイリング */
+.recognition-controls input[type="checkbox"] {
+    margin: 0 2px 0 0;  /* チェックボックスの右マージンを小さく */
+    vertical-align: middle;  /* 垂直方向の位置を調整 */
 }
 
-button:hover {
-    background-color: #357abd;
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-}
-
-button:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+.recognition-controls input[type="checkbox"] + label {
+    margin-right: 8px;  /* ラベル間の間隔を調整 */
+    font-size: 14px;  /* フォントサイズを他の要素に合わせる */
+    vertical-align: middle;  /* 垂直方向の位置を調整 */
 }

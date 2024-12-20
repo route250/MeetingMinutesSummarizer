@@ -1,7 +1,6 @@
 class UIController {
     constructor() {
-        this.startButton = document.getElementById('startButton');
-        this.speechStatusDiv = document.getElementById('speechStatus');
+        this.speechControl = document.getElementById('speechControl');
         this.llmStatusDiv = document.getElementById('llmStatus');
         this.transcriptArea = document.getElementById('transcriptArea');
         this.summaryArea = document.getElementById('summaryArea');
@@ -56,26 +55,24 @@ class UIController {
 
     updateUIForRecordingStart() {
         this.isRecording = true;
-        this.speechStatusDiv.textContent = '音声認識: 実行中';
-        this.speechStatusDiv.classList.add('active');
-        this.startButton.textContent = '停止';
+        this.speechControl.textContent = '音声認識: 実行中';
+        this.speechControl.classList.add('active');
     }
 
     updateUIForRecordingEnd() {
         this.isRecording = false;
-        this.speechStatusDiv.textContent = '音声認識: 停止中';
-        this.speechStatusDiv.classList.remove('active');
-        this.startButton.textContent = '音声認識開始';
+        this.speechControl.textContent = '音声認識: 停止中';
+        this.speechControl.classList.remove('active');
     }
 
     updateUIForRecognitonState(st) {
         if( this.isRecording ) {
             if( st==1 ) {
-                this.speechStatusDiv.textContent = '音声認識: sound';
+                this.speechControl.textContent = '音声認識: sound';
             } else if( st==2 ) {
-                this.speechStatusDiv.textContent = '音声認識: speech';
+                this.speechControl.textContent = '音声認識: speech';
             } else {
-                this.speechStatusDiv.textContent = '音声認識: silent';
+                this.speechControl.textContent = '音声認識: silent';
             }
         }
     }
@@ -129,7 +126,6 @@ class UIController {
             return;
         }
         return;
-
         const currentTime = Date.now();
         if (currentTime - this.lastSummaryUpdate >= 15000) {
             this.lastSummaryUpdate = currentTime;
@@ -172,13 +168,14 @@ class UIController {
     }
 
     updateStatusForError(error) {
-        this.speechStatusDiv.textContent = '音声認識: エラー';
+        this.speechControl.textContent = '音声認識: エラー';
+        this.speechControl.classList.remove('active');
         this.llmStatusDiv.textContent = 'LLM: 停止';
     }
 
     showBrowserSupportError() {
-        this.startButton.style.display = 'none';
-        this.speechStatusDiv.textContent = '音声認識: 非対応';
+        this.speechControl.textContent = '音声認識: 非対応';
+        this.speechControl.classList.remove('active');
         this.llmStatusDiv.textContent = 'LLM: 停止';
     }
 

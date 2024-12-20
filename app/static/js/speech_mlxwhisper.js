@@ -31,13 +31,11 @@ function getAllSupportedMimeTypes(...mediaTypes) {
     )].filter(variation => MediaRecorder.isTypeSupported(variation))
   }
   
-  // To get all mime types, use: getAllSupportedMimeTypes()
-  
-  console.log('Video mime types:')
-  console.log(getAllSupportedMimeTypes('video'))
-  
-  console.log('Audio mime types:')
-  console.log(getAllSupportedMimeTypes('audio'))
+// To get all mime types, use: getAllSupportedMimeTypes() 
+//   console.log('Video mime types:')
+//   console.log(getAllSupportedMimeTypes('video'))
+//   console.log('Audio mime types:')
+//   console.log(getAllSupportedMimeTypes('audio'))
   /*
     'webm;codecs=opus', 'audio/webm;codecs=pcm',
     'audio/webm;codecs="opus, opus"', 'audio/webm;codecs="opus, pcm"', 'audio/webm;codecs="pcm, opus"', 'audio/webm;codecs="pcm, pcm"',
@@ -47,6 +45,28 @@ function getAllSupportedMimeTypes(...mediaTypes) {
   /*
     audio/mp4", "audio/mp4;codecs=avc1", "audio/mp4;codecs=mp4a", "audio/mp4;codecs=\"avc1, avc1\"", "audio/mp4;codecs=\"avc1, mp4a\"", "audio/mp4;codecs=\"mp4a, avc1\"", "audio/mp4;codecs=\"mp4a, mp4a\""
   */
+
+// Cookie操作のユーティリティ関数
+const CookieUtil = {
+    setCookie: function(name, value, days = 30) {
+        const d = new Date();
+        d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+        const expires = "expires=" + d.toUTCString();
+        document.cookie = name + "=" + value + ";" + expires + ";path=/";
+    },
+    
+    getCookie: function(name) {
+        const cookieName = name + "=";
+        const cookies = document.cookie.split(';');
+        for(let i = 0; i < cookies.length; i++) {
+            let cookie = cookies[i].trim();
+            if (cookie.indexOf(cookieName) === 0) {
+                return cookie.substring(cookieName.length, cookie.length);
+            }
+        }
+        return "";
+    }
+};
 
 function calculateXORChecksum(data) {
     let checksum = 0;
@@ -69,45 +89,94 @@ async function blobToBase64(blob) {
 }
 class WhisperController {
     constructor() {
+        this.socket = null;
+        this.values = {};
         this.mediaRecorder = null;
         this.media_seq = 0;
         this.audioContext = null;
         this.audioChunks = [];
         this.stream = null;
-        this.socket = null;
         this.recog_lang = 'en';
         this.fragment = [];
         this.isListening = false; // 音声認識がアクティブかどうかを追跡
 
         // DOM要素の取得
-        this.status = document.getElementById('speechStatus');
+        this.speechControl = document.getElementById('speechControl');
 
         // 音声録音の設定
         this.constraints = {
             audio: {
                 echoCancellation: false,
-                noiseSuppression: true,
+                noiseSuppression: false,
                 autoGainControl: false,
                 channelCount: 1,
                 sampleRate: 16000
             }
         };
+
+        // 保存された設定の読み込み
+        this.loadSavedSettings();
         this.setupUiHandler();
     }
 
+    loadSavedSettings() {
+        // 言語設定の読み込み
+        const savedLang = CookieUtil.getCookie('recogLang');
+        if (savedLang) {
+            this.values['recogLang'] = savedLang;
+            const elem = document.getElementById('recogLang');
+            if (elem) {
+                elem.value = savedLang;
+            }
+        }
+        for( const key in this.constraints.audio ) {
+            const elem = document.getElementById(key);
+            const value = CookieUtil.getCookie(key);
+            if (elem && value ) {
+                this.constraints.audio[key] = value;
+                elem.checked = savedLang;
+            }
+        }
+        // モード設定の読み込み
+        const llmMode = CookieUtil.getCookie('llmMode');
+        if (llmMode) {
+            this.values['llmMode'] = llmMode;
+            const elem = document.querySelector(`input[name="llmMode"][value="${llmMode}"]`);
+            if (elem) {
+                elem.value = llmMode;
+                // エコーキャンセレーションの設定を更新
+                this.constraints.audio.echoCancellation = llmMode === 'conversation';
+            }
+        }
+    }
+
     setupUiHandler() {
-        document.getElementById('languageSelect').addEventListener('change', (event) => {
+        document.getElementById('recogLang').addEventListener('change', (event) => {
             const newLang = event.target.value;
             this.recog_lang = newLang;
+            // 言語設定をCookieに保存
+            CookieUtil.setCookie('recogLang', newLang);
             // 言語変更をサーバーに通知
-            if (this.socket && this.socket.connected) {
-                const selectedMode = document.querySelector('input[name="mode"]:checked').value;
-                this.socket.emit('configure', {'mode':selectedMode, 'lang':this.recog_lang}) ;
-            }
+            this.values['recogLang'] = newLang
+            this.sendValues().then(()=>{});
         });
-        this.recog_lang = document.getElementById('languageSelect').value;
 
-        document.getElementById('startButton').onclick = () => {
+        // audio trackの設定を変更する
+        for( const key in this.constraints.audio ) {
+            const elem = document.getElementById(key);
+            if(elem) {
+                elem.addEventListener('change', (event) => {
+                    const value = event.target.checked;
+                    CookieUtil.setCookie(key, value);
+                    if( this.constraints.audio[key] != value) {
+                        this.constraints.audio[key] = value;
+                        this.applyConstraints()
+                    }
+                });
+            }
+        }
+
+        this.speechControl.onclick = () => {
             window.uiController.handleStartButtonClick((shouldStart) => {
                 if (shouldStart) {
                     this.startRecording();
@@ -118,94 +187,133 @@ class WhisperController {
         };
 
         // モード選択に応じた設定
-        document.querySelectorAll('input[name="mode"]').forEach((radio) => {
+        document.querySelectorAll('input[name="llmMode"]').forEach((radio) => {
             radio.addEventListener('change', async (event) => {
-                const mode = event.target.value;
+                const llmMode = event.target.value;
+                // モード設定をCookieに保存
+                CookieUtil.setCookie('llmMode', llmMode);
+                this.values['llmMode'] = llmMode
+                this.sendValues().then(()=>{});
+                    
                 let upd = false
-                if (mode === 'conversation') {
+                if (llmMode === 'conversation') {
                     upd = !this.constraints.audio.echoCancellation
                     this.constraints.audio.echoCancellation = true;
                 } else {
                     upd = this.constraints.audio.echoCancellation
                     this.constraints.audio.echoCancellation = false;
                 }
-                // モード変更をサーバーに通知
-                if (this.socket && this.socket.connected) {
-                    this.socket.emit('configure', {'mode':mode, 'lang':this.recog_lang});
+                // audio trackの設定を変更する
+                if (upd) {
+                    this.applyConstraints();
                 }
-                // // 音声認識がアクティブな場合のみストリームを再取得
-                // if (this.isListening && this.stream) {
-                //     this.stream.getTracks().forEach(track => track.stop());
-                //     this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
-                // }
             });
         });
     }
 
     // WebSocket接続を初期化
-    initializeWebSocket() {
-        this.socket = io(window.location.origin, {
-            path: '/socket.io',
-            transports: ['websocket'],
-        });
-
-        const selectedMode = document.querySelector('input[name="mode"]:checked').value;
-        this.socket.on('connect', () => {
-            console.log('socketio connected');
-            this.socket.emit('configure', {'mode':selectedMode, 'lang':this.recog_lang});
-            window.uiController.updateUIForRecordingStart();
-        });
-
-        this.socket.on('transcription', (data) => {
-            console.log('socketio recv transcription');
-            const results = []
-            if (data.text) {
-                for (const result_text of data.text) {
-                    results.push({ text: result_text, isFinal: true, confidence: 1.0 });
-                }
-            }
-            if (data.tmp) {
-                for (const result_text of data.tmp) {
-                    results.push({ text: result_text, isFinal: false, confidence: 0.5});
-                }
-            }
-            window.uiController.updateTranscriptUI(results);
-        });
-        this.socket.on('audio_error', (data) => {
-            const msg = data.error
-            console.log('socketio recv audio',msg);
-            this.stopRecording()
-        });
-        this.socket.on('audio_stream', (data) => {
-            console.log('socketio recv audio');
-            this.playAudio(data.audio);
-        });
-        this.socket.on('audio_stream', (data) => {
-            console.log('socketio recv audio');
-            this.playAudio(data.audio);
-        });
-        this.socket.on('result_text', (data) => {
-            console.log('socketio recv audio');
-            const text = data.text;
-            const audio = data.audio;
-            if( audio ) {
-                this.playAudio(audio);
-            }
-            if( text ) {
-                window.uiController.updateSummaryUI(text);
-            }
-        });
-        this.socket.on('connect_error', (error) => {
-            console.log('socketio connect error',error);
-            window.uiController.updateStatusForError(error);
-            window.uiController.updateUIForRecordingEnd();
-        });
-
-        this.socket.on('disconnect', () => {
-            console.log('socketio disconnect');
-            window.uiController.updateUIForRecordingEnd();
-        });
+    async initializeWebSocket() {
+        // 接続中（CONNECTING）の場合に待機
+        if( !this.socket) {
+            console.log('connect','start',this.socket?.readyState)
+            this.socket = io(window.location.origin, { path: '/socket.io', transports: ['websocket'], });
+            // イベントリスナーを設定
+            this.socket.on('connect', this.onConnect.bind(this));
+            this.socket.on('connect_error', this.onConnectError.bind(this));
+            this.socket.on('disconnect', this.onDisconnect.bind(this));
+            this.socket.on('ev', this.onEv.bind(this));
+            //this.socket.on('audio_error', this.onAudioError.bind(this));
+            this.socket.on('audio_stream', this.onAudioStream.bind(this));
+            this.socket.on('result_text', this.onResultText.bind(this));
+            // 初期データ送信        
+            await this.sendValues();    
+        }
     }
+
+    onConnect() {
+        console.log('socketio connected');
+        const llmMode = document.querySelector('input[name="llmMode"]:checked').value;
+    }
+    onConnectError(error) {
+        console.log('socketio connect error',error);
+        window.uiController.updateStatusForError(error);
+        this.socket = null;
+    }
+    onDisconnect() {
+        console.log('socketio disconnect');
+        window.uiController.updateUIForRecordingEnd();
+        this.socket = null;
+    }
+    onEv(event) {
+        const cmd = event['msg']
+        const data = event['data']
+        if( cmd == 'transcription' ) {
+            this.onTranscription(data)
+        }else if( cmd=='resultText' ) {
+            
+        }else if( cmd=='audioError' ) {
+            const msg = data.error
+            console.log('socketio recv audio err',msg);
+            this.stopRecording() 
+        }
+    }
+    onTranscription(data) {
+        console.log('socketio recv transcription');
+        const results = []
+        if (data.text) {
+            for (const result_text of data.text) {
+                results.push({ text: result_text, isFinal: true, confidence: 1.0 });
+            }
+        }
+        if (data.tmp) {
+            for (const result_text of data.tmp) {
+                results.push({ text: result_text, isFinal: false, confidence: 0.5});
+            }
+        }
+        window.uiController.updateTranscriptUI(results);
+    }
+    onResultText(data) {
+        console.log('socketio recv text');
+        const text = data.text;
+        const audio = data.audio;
+        if( audio ) {
+            this.playAudio(audio);
+        }
+        if( text ) {
+            window.uiController.updateSummaryUI(text);
+        }
+    }
+
+    onAudioStream(data) {
+        console.log('socketio recv audio');
+        this.playAudio(data.audio);
+    }
+    async dicsonnect() {
+        // WebSocket切断
+        if (this.socket && ( this.socket.readyState == WebSocket.OPEN || this.socket.readyState==WebSocket.CONNECTING ) ) {
+            this.socket.disconnect();
+        }
+    }
+    // audio trackの設定を変更する
+    applyConstraints() {
+        if (this.isListening && this.stream) {
+            const this_const = JSON.stringify(this.constraints);
+            let upd = false;
+            const tracks = this.stream.getTracks();
+            tracks.forEach((track) => {
+                const appliedConstraints = track.getConstraints();
+                // 制約を比較
+                if (this_const !== JSON.stringify(appliedConstraints)) {
+                    upd = true;
+                }
+            });
+            if( upd ) {
+                this.stopRecording();
+                this.startRecording();    
+            }
+        }
+    }
+
     async playAudio(audioData) {
         try {
             if (!this.audioContext) {
@@ -226,11 +334,25 @@ class WhisperController {
             console.error('Error decoding or playing audio:', error);
         }
     }
+
+    async asend_ev(msg,data) {
+        await this.initializeWebSocket()
+        this.socket.emit('ev', { msg: msg, data: data});
+    }
+
+    send_ev(msg,data) {
+        asend_ev(msg,data).then( ()=> {} );
+    }
+
+    async sendValues() {
+        await this.asend_ev('configure',this.values);
+    }
+
     async startRecording() {
         try {
             this.isListening = true; // 音声認識をアクティブに設定
             // WebSocket接続を初期化
-            this.initializeWebSocket();
+            await this.initializeWebSocket();
             
             // マイクへのアクセスを要求
             this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
@@ -249,7 +371,7 @@ class WhisperController {
                             const seq = this.media_seq++;
                             const type = event.data.type;
                             const send = 1;
-                            console.log('send mode',send)
+                            //console.log('send mode',send)
                             if( send==1 ) {
                                 // ダイレクト
                                 this.socket.emit('audio_bin', event.data )
@@ -289,6 +411,7 @@ class WhisperController {
             if (!this.audioContext) {
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
+            window.uiController.updateUIForRecordingStart();
         } catch (error) {
             this.handleError(error);
         }
@@ -310,11 +433,7 @@ class WhisperController {
             if (this.stream) {
                 this.stream.getTracks().forEach(track => track.stop());
             }
-            // WebSocket切断
-            if (this.socket) {
-                await new Promise(resolve => setTimeout(resolve, 500));
-                this.socket.disconnect();
-            }
+            window.uiController.updateUIForRecordingEnd();
         } catch (error) {
             this.handleError(error);
         }

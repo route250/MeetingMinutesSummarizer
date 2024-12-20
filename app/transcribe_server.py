@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, json
 import time
 import base64
 from io import BytesIO
@@ -69,8 +69,13 @@ def create_app():
             if self._t2 is None:
                 self._t2 = loop.create_task( self._task_vod() )
 
-        def update_settings(self, mode: str, lang: str):
-            """設定を更新する"""
+        def send_ev(self,msg,data):
+            socketio.emit('ev', {'msg': msg, 'data': data}, to=self.client_id)
+
+        async def update_configure(self, data ):
+            mode = data.get('llmMode', 'off') if data else 'off'
+            lang = data.get('recogLang', 'en') if data else 'en'
+            print(f"Mode: {mode}, Lang: {lang}")
             self.mode = mode
             self.lang = lang
             # 必要に応じてwhisper_procやvot_procの設定も更新
@@ -102,7 +107,7 @@ def create_app():
                             # 確定したテキストを送信
                             if fixed_text or temp_text:
                                 print(f"Sending fixed text to {self.client_id}: {fixed_text} {temp_text}")
-                                socketio.emit('transcription', {'text': ' '.join(fixed_text), 'tmp': ' '.join(temp_text)}, to=self.client_id)
+                                self.send_ev( 'transcription', {'text': ' '.join(fixed_text), 'tmp': ' '.join(temp_text)} )
                             if fixed_text is not None and fixed_text!='':
                                 await self.vot_proc.put(fixed_text,temp_text)
                     except Exception as ex:
@@ -163,6 +168,7 @@ def create_app():
 
     @app.route('/static/<path:path>')
     def send_static(path):
+        print(f"static {path}")
         return send_from_directory('static', path)
 
     @socketio.on('connect')
@@ -181,23 +187,27 @@ def create_app():
         except Exception as ex:
             print(f"Error in handle_connect: {str(ex)}")
             emit('error', {'error': str(ex)})
-
-    @socketio.on('configure')
-    def handle_configure(data):
-        """設定変更時のハンドラ"""
+    @socketio.on('ev')
+    def handle_message(raw_message):
         try:
-            mode = data.get('mode', 'off') if data else 'of'
-            lang = data.get('lang', 'en') if data else 'en'
-            print(f"Mode: {mode}, Lang: {lang}")
             socket_request = cast(SocketIORequest, request)
             client_id = socket_request.sid
-            print(f'Settings changed for client {client_id}: mode={mode}, lang={lang}')
             session = client_sessions.get(client_id)
             if session:
-                session.update_settings(mode, lang)
+                cmd_dict:dict = raw_message
+                print(f"[API]message {raw_message}")
+                cmd = cmd_dict.get('msg')
+                data = cmd_dict.get('data')
+                if cmd == 'configure':
+                    # 非同期タスクを作成
+                    global_event_loop.create_task(session.update_configure(data))
+                    return
+                elif cmd == 'aaa':
+                    pass
+                    return
+            print(f"[API] invalid cmd {raw_message}")
         except Exception as ex:
-            print(f"Error in handle_configure: {str(ex)}")
-            emit('error', {'error': str(ex)})
+            print(f"[API]message {raw_message} {str(str)}")
 
     @socketio.on('audio_bin')
     def handle_audio_bin(data):
@@ -216,7 +226,8 @@ def create_app():
             msg = f"Error handling audio data for client {client_id}: {str(e)}"
         if msg:
             print(f"{msg}")
-            emit('audio_error', {'error': msg})
+            if client_id:
+                socketio.send( json.dumps({'msg':'audioError', 'data': {'error': msg}}), to=client_id )
 
     @socketio.on('audio_b64')
     def handle_audio_b64(data):

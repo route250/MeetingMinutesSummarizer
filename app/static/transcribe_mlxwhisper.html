@@ -10,15 +10,17 @@
     <div class="container">
         <div class="column">
             <div class="recognition-controls">
-                <div id="speechStatus" class="status-item">音声認識: 停止中</div>
-                <select id="languageSelect">
+                <button id="speechControl" class="status-button">音声認識: 停止中</button>
+                <select id="recogLang">
                     <option value="en-US">English</option>
                     <option value="ja-JP">日本語</option>
                     <option value="en-GB">English (UK)</option>
                     <option value="zh-CN">中文 (简体)</option>
                     <option value="ko-KR">한국어</option>
                 </select>
-                <button id="startButton">音声認識開始</button>
+                <label><input id="echoCancellation" type='checkbox'>Echo</label>
+                <label><input id="noiseSuppression" type='checkbox'>Noise</label>
+                <label><input id="autoGainControl" type='checkbox'>Gain</label>
                 <a href="/transcribe_webrtc">webrtc</a>
             </div>
             <div id="transcriptArea" class="transcript-area"></div>
@@ -27,19 +29,19 @@
             <div class="summary-controls">
                 <div class="mode-select">
                     <label>
-                        <input type="radio" name="mode" value="off" checked>
+                        <input type="radio" name="llmMode" value="off" checked>
                         OFF
                     </label>
                     <label>
-                        <input type="radio" name="mode" value="summary">
+                        <input type="radio" name="llmMode" value="summary">
                         要約
                     </label>
                     <label>
-                        <input type="radio" name="mode" value="translation">
+                        <input type="radio" name="llmMode" value="translation">
                         翻訳
                     </label>
                     <label>
-                        <input type="radio" name="mode" value="conversation">
+                        <input type="radio" name="llmMode" value="conversation">
                         会話
                     </label>
                 </div>
@@ -50,7 +52,7 @@
     </div>
 
     <script src="/static/js/ui.js"></script>
-    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="/static/libs/cdn.socket.io/4.0.1/socket.io.min.js"></script>
     <script src="/static/js/speech_mlxwhisper.js"></script>
 </body>
 </html>
