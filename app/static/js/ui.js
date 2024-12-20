@@ -1,10 +1,38 @@
+
+// Cookie操作のユーティリティ関数
+const CookieUtil = {
+    setCookie: function(name, value, days = 30) {
+        const d = new Date();
+        d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+        const expires = "expires=" + d.toUTCString();
+        document.cookie = name + "=" + value + ";" + expires + ";path=/";
+        //console.log('setCookie', name + "=" + value + ";" + expires + ";path=/" )
+    },
+    
+    getCookie: function(name, value) {
+        const cookieName = name + "=";
+        const cookies = document.cookie.split(';');
+        for(let i = 0; i < cookies.length; i++) {
+            let cookie = cookies[i].trim();
+            if (cookie.indexOf(cookieName) === 0) {
+                ret = cookie.substring(cookieName.length, cookie.length);
+                //console.log('getCookie', cookie, ret )
+                return ret;
+            }
+        }
+        return value;
+    }
+};
+
 class UIController {
     constructor() {
+        this.values = {}
+        this.event_from_ui = {}
+        this.event_to_ui = {}
         this.speechControl = document.getElementById('speechControl');
         this.llmStatusDiv = document.getElementById('llmStatus');
         this.transcriptArea = document.getElementById('transcriptArea');
         this.summaryArea = document.getElementById('summaryArea');
-        this.modeRadios = document.getElementsByName('mode');
         
         this.isRecording = false;
         this.fragment = [];
@@ -18,6 +46,113 @@ class UIController {
         // window.addEventListener('resize', () => this.adjustTextAreaHeights());
         // 初期化時にも高さを調整（DOMの読み込み完了後）を削除
         // setTimeout(() => this.adjustTextAreaHeights(), 0);
+
+        this.values['recogStat'] = 'stop';
+        const recogStat = document.getElementById('recogStat');
+        recogStat.onclick = () => {
+            console.log('onclick')
+            const isStop = this.values['recogStat'] !== 'start'
+            const key = isStop ? 'recogStart' : 'recogStop';
+            if( key in this.event_from_ui ) {
+                console.log('onclick',key)
+                this.event_from_ui[key]().then( ()=>{} )
+            }
+        };
+        this.event_to_ui['recogStat'] = async (value) => {
+            if( value==='start' ) {
+                recogStat.textContent = '音声認識: 実行中';
+                recogStat.classList.add('active');
+            } else {
+                recogStat.classList.remove('active');
+                if( value=='stop' ) {
+                    recogStat.textContent = '音声認識: 停止中';
+                } else if( value=='not' ) {
+                    recogStat.textContent = '音声認識: 非対応';
+                } else {
+                    recogStat.textContent = '音声認識: エラー';
+                }
+            }
+        }
+    // lang
+        const recogLang = CookieUtil.getCookie('recogLang','en-US');
+        this.values['recogLang'] = recogLang;
+        const elem = document.getElementById('recogLang');
+        if (elem) {
+            // 初期値
+            elem.value = recogLang;
+            // uiからの通知
+            elem.addEventListener('change', (event) => {
+                this.updateFromUI('recogLang', event.target.value );
+            });
+            // uiへの通知
+            this.event_to_ui['recogLang'] = async (value) => {
+                elem.value = value;
+            }
+        }
+        // echo
+        const ids = [ "echoCancellation","noiseSuppression","autoGainControl" ]
+        for( const key of ids ) {
+            const elem = document.getElementById(key);
+            const svalue = CookieUtil.getCookie(key,'false');
+            const value = svalue==='true';
+            //console.log('get',key,value);
+            this.values[key] = value;
+            if (elem) {
+                //初期値
+                elem.checked = value;
+                // uiからの通知
+                elem.addEventListener('change', (event) => {
+                    this.updateFromUI(key,event.target.checked);
+                });
+                // uiへの通知
+                this.event_to_ui[key] = async (value) => {
+                    elem.checked = value;
+                }
+            }
+        }
+        // モード選択に応じた設定
+        const llmMode = CookieUtil.getCookie('llmMode','off');
+        this.values['llmMode'] = llmMode;
+        // 初期値
+        document.querySelectorAll('input[name="llmMode"]').forEach( (radio)=>{
+            radio.checked = radio.value===llmMode;
+        })
+        // uiからの通知
+        document.querySelectorAll('input[name="llmMode"]').forEach((radio) => {
+            radio.addEventListener('change', async (event) => {
+                this.updateFromUI('llmMode', event.target.value );
+            });
+        });
+        // uiへの通知
+        this.event_to_ui['llmMode'] = async (value) => {
+            document.querySelectorAll('input[name="llmMode"]').forEach( (radio)=>{
+                radio.checked = radio.value===value;
+            })
+        }
+    }
+
+    uiHandler( key, func ) {
+        this.event_from_ui[key] = func;
+    }
+
+    updateFromUI( key, value ) {
+        if( !key in this.values || this.values[key] !== value ) {
+            CookieUtil.setCookie(key, value);
+            this.values[key] = value;
+            if( key in this.event_from_ui ) {
+                this.event_from_ui[key](value).then( ()=>{} );
+            }
+        }
+    }
+
+    updateToUI( key, value ) {
+        if( !key in this.values || this.values[key] !== value ) {
+            CookieUtil.setCookie(key, value);
+            this.values[key] = value;
+            if( key in this.event_to_ui ) {
+                this.event_to_ui[key](value).then( ()=>{} );
+            }
+        }
     }
 
     /*
@@ -43,27 +178,6 @@ class UIController {
         }
     }
     */
-
-    getCurrentMode() {
-        for (const radio of this.modeRadios) {
-            if (radio.checked) {
-                return radio.value;
-            }
-        }
-        return 'summary'; // デフォルトは要約モード
-    }
-
-    updateUIForRecordingStart() {
-        this.isRecording = true;
-        this.speechControl.textContent = '音声認識: 実行中';
-        this.speechControl.classList.add('active');
-    }
-
-    updateUIForRecordingEnd() {
-        this.isRecording = false;
-        this.speechControl.textContent = '音声認識: 停止中';
-        this.speechControl.classList.remove('active');
-    }
 
     updateUIForRecognitonState(st) {
         if( this.isRecording ) {
@@ -120,8 +234,8 @@ class UIController {
             return;
         }
 
-        const currentMode = this.getCurrentMode();
-        if (currentMode === 'off') {
+        const llmMode = this.values['llmMode'];
+        if (!llmMode || llmMode === 'off') {
             this.llmStatusDiv.textContent = 'LLM: OFF';
             return;
         }
@@ -141,7 +255,7 @@ class UIController {
                     },
                     body: JSON.stringify({ 
                         text: currentText,
-                        mode: currentMode
+                        mode: llmMode
                     })
                 });
 
@@ -167,25 +281,6 @@ class UIController {
         this.summaryArea.scrollTop = this.summaryArea.scrollHeight;
     }
 
-    updateStatusForError(error) {
-        this.speechControl.textContent = '音声認識: エラー';
-        this.speechControl.classList.remove('active');
-        this.llmStatusDiv.textContent = 'LLM: 停止';
-    }
-
-    showBrowserSupportError() {
-        this.speechControl.textContent = '音声認識: 非対応';
-        this.speechControl.classList.remove('active');
-        this.llmStatusDiv.textContent = 'LLM: 停止';
-    }
-
-    handleStartButtonClick(callback) {
-        if (this.isRecording) {
-            callback(false); // 停止
-        } else {
-            callback(true);  // 開始
-        }
-    }
 }
 
 // UIコントローラーのインスタンスを作成してグローバルに公開

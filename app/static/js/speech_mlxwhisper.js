@@ -47,7 +47,7 @@ function getAllSupportedMimeTypes(...mediaTypes) {
   */
 
 // Cookie操作のユーティリティ関数
-const CookieUtil = {
+const xCookieUtil = {
     setCookie: function(name, value, days = 30) {
         const d = new Date();
         d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
@@ -115,100 +115,115 @@ class WhisperController {
         };
 
         // 保存された設定の読み込み
-        this.loadSavedSettings();
+        //this.loadSavedSettings();
         this.setupUiHandler();
     }
 
     loadSavedSettings() {
         // 言語設定の読み込み
-        const savedLang = CookieUtil.getCookie('recogLang');
-        if (savedLang) {
-            this.values['recogLang'] = savedLang;
-            const elem = document.getElementById('recogLang');
-            if (elem) {
-                elem.value = savedLang;
-            }
-        }
-        for( const key in this.constraints.audio ) {
-            const elem = document.getElementById(key);
-            const value = CookieUtil.getCookie(key);
-            if (elem && value ) {
-                this.constraints.audio[key] = value;
-                elem.checked = savedLang;
-            }
-        }
+        // const savedLang = CookieUtil.getCookie('recogLang');
+        // if (savedLang) {
+        //     this.values['recogLang'] = savedLang;
+        //     const elem = document.getElementById('recogLang');
+        //     if (elem) {
+        //         elem.value = savedLang;
+        //     }
+        // }
+        // for( const key in this.constraints.audio ) {
+        //     const elem = document.getElementById(key);
+        //     const value = CookieUtil.getCookie(key);
+        //     if (elem && value ) {
+        //         this.constraints.audio[key] = value;
+        //         elem.checked = value;
+        //     }
+        // }
         // モード設定の読み込み
-        const llmMode = CookieUtil.getCookie('llmMode');
-        if (llmMode) {
-            this.values['llmMode'] = llmMode;
-            const elem = document.querySelector(`input[name="llmMode"][value="${llmMode}"]`);
-            if (elem) {
-                elem.value = llmMode;
-                // エコーキャンセレーションの設定を更新
-                this.constraints.audio.echoCancellation = llmMode === 'conversation';
-            }
-        }
+        // const llmMode = CookieUtil.getCookie('llmMode');
+        // if (llmMode) {
+        //     this.values['llmMode'] = llmMode;
+        //     const elem = document.querySelector(`input[name="llmMode"][value="${llmMode}"]`);
+        //     if (elem) {
+        //         elem.value = llmMode;
+        //         // エコーキャンセレーションの設定を更新
+        //         this.constraints.audio.echoCancellation = llmMode === 'conversation';
+        //     }
+        // }
     }
 
     setupUiHandler() {
-        document.getElementById('recogLang').addEventListener('change', (event) => {
-            const newLang = event.target.value;
-            this.recog_lang = newLang;
-            // 言語設定をCookieに保存
-            CookieUtil.setCookie('recogLang', newLang);
-            // 言語変更をサーバーに通知
-            this.values['recogLang'] = newLang
+        // document.getElementById('recogLang').addEventListener('change', (event) => {
+        //     const newLang = event.target.value;
+        //     this.recog_lang = newLang;
+        //     // 言語設定をCookieに保存
+        //     CookieUtil.setCookie('recogLang', newLang);
+        //     // 言語変更をサーバーに通知
+        //     this.values['recogLang'] = newLang
+        //     this.sendValues().then(()=>{});
+        // });
+        window.uiController.uiHandler('recogStart', async (value) => {
+            this.startRecording();
+        } )
+        window.uiController.uiHandler('recogStop', async (value) => {
+            this.stopRecording();
+        } )
+
+        // this.speechControl.onclick = () => {
+        //     window.uiController.handleStartButtonClick((shouldStart) => {
+        //         if (shouldStart) {
+        //             this.startRecording();
+        //         } else {
+        //             this.stopRecording();
+        //         }
+        //     });
+        // };
+
+        window.uiController.uiHandler('recogLang', async (value) => {
+            console.log('[TEST] recogLang ',value);
+            // サーバーに通知
+            this.values['recogLang'] = value
             this.sendValues().then(()=>{});
-        });
+        })
 
         // audio trackの設定を変更する
         for( const key in this.constraints.audio ) {
-            const elem = document.getElementById(key);
-            if(elem) {
-                elem.addEventListener('change', (event) => {
-                    const value = event.target.checked;
-                    CookieUtil.setCookie(key, value);
-                    if( this.constraints.audio[key] != value) {
-                        this.constraints.audio[key] = value;
-                        this.applyConstraints()
-                    }
-                });
-            }
-        }
-
-        this.speechControl.onclick = () => {
-            window.uiController.handleStartButtonClick((shouldStart) => {
-                if (shouldStart) {
-                    this.startRecording();
-                } else {
-                    this.stopRecording();
-                }
-            });
-        };
-
-        // モード選択に応じた設定
-        document.querySelectorAll('input[name="llmMode"]').forEach((radio) => {
-            radio.addEventListener('change', async (event) => {
-                const llmMode = event.target.value;
-                // モード設定をCookieに保存
-                CookieUtil.setCookie('llmMode', llmMode);
-                this.values['llmMode'] = llmMode
-                this.sendValues().then(()=>{});
-                    
-                let upd = false
-                if (llmMode === 'conversation') {
-                    upd = !this.constraints.audio.echoCancellation
-                    this.constraints.audio.echoCancellation = true;
-                } else {
-                    upd = this.constraints.audio.echoCancellation
-                    this.constraints.audio.echoCancellation = false;
-                }
-                // audio trackの設定を変更する
-                if (upd) {
+            window.uiController.uiHandler(key, async (value) => {
+                console.log('[TEST] ', key, value );
+                if( this.constraints.audio[key] != value) {
+                    this.constraints.audio[key] = value;
                     this.applyConstraints();
                 }
             });
-        });
+        }
+        
+        window.uiController.uiHandler('llmMode', async (value) => {
+            console.log('[TEST] llmMode ',value);
+            // サーバーに通知
+            this.values['llmMode'] = value
+            this.sendValues().then(()=>{});
+        })
+        // // モード選択に応じた設定
+        // document.querySelectorAll('input[name="llmMode"]').forEach((radio) => {
+        //     radio.addEventListener('change', async (event) => {
+        //         const llmMode = event.target.value;
+        //         // モード設定をCookieに保存
+        //         CookieUtil.setCookie('llmMode', llmMode);
+        //         this.values['llmMode'] = llmMode
+        //         this.sendValues().then(()=>{});
+                    
+        //         let upd = false
+        //         if (llmMode === 'conversation') {
+        //             upd = !this.constraints.audio.echoCancellation
+        //             this.constraints.audio.echoCancellation = true;
+        //         } else {
+        //             upd = this.constraints.audio.echoCancellation
+        //             this.constraints.audio.echoCancellation = false;
+        //         }
+        //         // audio trackの設定を変更する
+        //         if (upd) {
+        //             this.applyConstraints();
+        //         }
+        //     });
+        // });
     }
 
     // WebSocket接続を初期化
@@ -241,7 +256,7 @@ class WhisperController {
     }
     onDisconnect() {
         console.log('socketio disconnect');
-        window.uiController.updateUIForRecordingEnd();
+        window.uiController.updateToUI('recogStat','stop');
         this.socket = null;
     }
     onEv(event) {
@@ -411,7 +426,7 @@ class WhisperController {
             if (!this.audioContext) {
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
-            window.uiController.updateUIForRecordingStart();
+            window.uiController.updateToUI('recogStat','start')
         } catch (error) {
             this.handleError(error);
         }
@@ -433,7 +448,7 @@ class WhisperController {
             if (this.stream) {
                 this.stream.getTracks().forEach(track => track.stop());
             }
-            window.uiController.updateUIForRecordingEnd();
+            window.uiController.updateToUI('recogStat','stop');
         } catch (error) {
             this.handleError(error);
         }
@@ -441,8 +456,7 @@ class WhisperController {
 
     handleError(error) {
         console.error('エラーが発生しました:', error);
-        window.uiController.updateStatusForError(error);
-        window.uiController.updateUIForRecordingEnd();
+        window.uiController.updateToUI('recogStat','error');
     }
 
 }
