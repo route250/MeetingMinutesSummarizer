@@ -1,15 +1,17 @@
 import asyncio
+from asyncio.subprocess import Process as SubProcess
 import traceback
 import time
+import math
 import re,json
 from typing import NamedTuple
 from io import BytesIO
 from io import BufferedReader
 import subprocess
 from subprocess import Popen
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Manager, Queue
 from queue import Empty
-from multiprocessing.connection import Connection
+#from multiprocessing.connection import Connection
 import threading
 from threading import Thread
 import numpy as np
@@ -27,25 +29,44 @@ except:
     USE_MLX_WHISPER:bool = False
 
 # tiny base small medium large
-WHISPER_MODEL_TINY = "mlx-community/whisper-tiny-mlx-q4"
-WHISPER_MODEL_BASE = "mlx-community/whisper-base-mlx-q4"
-WHISPER_MODEL_SMALL = "mlx-community/whisper-small-mlx-q4"
-WHISPER_MODEL_MEDIUM = "mlx-community/whisper-medium-mlx-q4"
-WHISPER_MODEL_LARGE = "mlx-community/whisper-large-v3-turbo"
-
 WHISPER_MODEL_TINY_EN = "mlx-community/whisper-tiny.en-mlx-q4"
-WHISPER_MODEL_BASE_EN = "mlx-community/whisper-base.en-mlx-q4"
-WHISPER_MODEL_SMALL_EN = "mlx-community/whisper-small.en-mlx-q4"
+WHISPER_MODEL_LARGE_EN = "mlx-community/whisper-small.en-mlx-q4"
 
-def lang_to_model(lang)->tuple[str,str]:
-    if lang is None or lang.strip()=='' or lang=='off':
-        return WHISPER_MODEL_SMALL_EN,'off'
-    elif lang.startswith('en'):
-        return WHISPER_MODEL_SMALL_EN,'en'
-    elif lang.startswith('ja'):
-        return WHISPER_MODEL_SMALL,'ja'
-    else:
-        return WHISPER_MODEL_SMALL,'ja'
+WM = {
+    'en': 'small.en',
+    'ja': 'kotoba',
+
+    'kotoba': ("kaiinui/kotoba-whisper-v1.1-mlx",'ja'),
+    'tiny.ja': ("mlx-community/whisper-tiny-mlx-q4",'ja'),
+    'base.ja': ("mlx-community/whisper-base-mlx-q4",'ja'),
+    'small.ja': ("mlx-community/whisper-small-mlx-q4",'ja'),
+    'medium.ja': ("mlx-community/whisper-medium-mlx-q4",'ja'),
+    'large.ja': ("mlx-community/whisper-large-v3-turbo-q4",'ja'),
+
+    'tiny.en': (WHISPER_MODEL_TINY_EN,'en'),
+    'base.en': ("mlx-community/whisper-base.en-mlx-q4",'en'),
+    'small.en': ("mlx-community/whisper-small.en-mlx-q4",'en'),
+    #'medium.en': ("mlx-community/whisper-medium.en-mlx-q4",'en'),
+
+    'tiny': ("mlx-community/whisper-tiny-mlx-q4",''),
+    'base': ("mlx-community/whisper-base-mlx-q4",''),
+    'small': ("mlx-community/whisper-small-mlx-q4",''),
+    'medium': ("mlx-community/whisper-medium-mlx-q4",''),
+    'large': ("mlx-community/whisper-large-v3-turbo-q4",''),
+}
+
+def lang_to_model(lang:str|None)->tuple[str,str]:
+    if lang is not None and lang.strip()!='' and lang!='off':
+        ret = lang.lower()
+        if ret.startswith('en-'):
+            ret='en'
+        elif ret.startswith('ja-'):
+            ret='ja'
+        while isinstance(ret,str):
+            ret = WM.get(ret)
+        if isinstance(ret,tuple):
+            return ret
+    return WHISPER_MODEL_TINY_EN,'off'
 
 SAMPLE_RATE=16000
 _pcm_counter = 0
@@ -115,15 +136,15 @@ class Seg:
         return {'seek': self.seek, 'start':self.start, 'end':self.end, 'isFixed':self.isFixed, 'text': self.text,
                  'prob':self.avg_logprob, 'comp':self.compression_ratio, 'no_speech':self.no_speech_prob }
 
-def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_SMALL_EN, lang:str='en', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
+def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_TINY_EN, lang:str='', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
 
     if not USE_MLX_WHISPER:
         return []
-
+    xlang = lang if lang!='' else None
     t0 = time.time()
     result = mlx_whisper.transcribe(
         audio, path_or_hf_repo=model,
-        language=lang,
+        language=xlang,
         prompt=prompt,
         #hallucination_silence_threshold=0.5,
         no_speech_threshold=0.2,
@@ -138,9 +159,27 @@ def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_SMALL_EN, lang:str='
             Seg( id=seg.get('id'), seek=seg.get('seek'),
                  start = seg.get('start'), end = seg.get('end'), text = seg.get('text'),
                  avg_logprob=seg.get('avg_logprob'), compression_ratio=seg.get('compression_ratio'),no_speech_prob=seg.get('no_speech_prob'))
-            for seg in segs if seg.get('text') and seg.get('no_speech_prob',0.0)<0.2
+            for seg in segs if seg.get('text') and seg.get('no_speech_prob',0.0)<0.1
         ]
     return []
+
+async def async_ffmpeg() ->SubProcess:
+    cmd = "ffmpeg"
+    cmdline = [
+            "-err_detect", "ignore_err","-ignore_unknown",
+            "-i", "-",
+            "-loglevel", "error",
+            "-threads", "0",
+            "-f", "s16le",
+            "-ac", "1",
+            "-acodec", "pcm_s16le",
+            "-ar", str(SAMPLE_RATE),
+            "-"
+    ]
+    bufsz = 512
+    ffmpeg_process = await asyncio.create_subprocess_exec(cmd, *cmdline,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE )
+    return ffmpeg_process
 
 def popen_ffmpeg() ->Popen:
     cmdline = [
@@ -156,12 +195,12 @@ def popen_ffmpeg() ->Popen:
             "-"
     ]
     bufsz = 512
-    ffmpeg_process = subprocess.Popen(cmdline,bufsize=bufsz,pipesize=bufsz, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    ffmpeg_process = Popen(cmdline,bufsize=bufsz,pipesize=bufsz, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return ffmpeg_process
 
-def check_audio(audio:bytes,size:int) ->str:
+async def check_audio(audio:bytes,size:int) ->str:
     try:
-        proc:Popen = popen_ffmpeg()
+        proc:SubProcess = await async_ffmpeg()
         if proc is None:
             return "can not start ffmpeg"
         else:
@@ -172,7 +211,7 @@ def check_audio(audio:bytes,size:int) ->str:
                     proc.stdin.write(audio)
                     proc.stdin.close()
                     if proc.stdout:
-                        output = proc.stdout.read()
+                        output = await proc.stdout.read()
                         if isinstance(output,bytes) and len(output)>0:
                             aa = np.frombuffer(output,dtype=np.int16)
                             if isinstance(aa,np.ndarray) and len(aa)>0:
@@ -181,7 +220,7 @@ def check_audio(audio:bytes,size:int) ->str:
                             else:
                                 err = f"invalid audio length {len(aa)}!={size}"
                     if proc.stderr:
-                        lines = proc.stderr.read()
+                        lines = await proc.stderr.read()
                         if len(lines)>0:
                             err = lines.decode().strip()
                             if "File ended prematurely at pos" in err:
@@ -214,13 +253,17 @@ class MlxWhisperProcess:
             print(f"request lang={lang}")
             self._audio_queue.put(('set_language', lang))
         else:
-            print(f"skip lang={lang}")
+            print(f"set lang={lang}")
 
-    def append_audio(self, seq:int, typ:str, data: bytes):
+    def append_audio(self, seq:int, typ:str, data: bytes) ->int:
         if isinstance(data,bytes) and len(data)>0 and self._whisper_process and self._whisper_process.is_alive():
             #print(f"[AUdio]{seq},{typ}")
             self._audio_queue.put(data)
             time.sleep(0.01)
+        try:
+            return self._audio_queue.qsize()
+        except:
+            return 0
 
     def close_audio(self):
         if self._whisper_process and self._whisper_process.is_alive():
@@ -379,7 +422,8 @@ class MlxWhisperProcess:
                 # get audio segment
                 if acnt==0:
                     print(f"[Whisper]wait audio")
-                buf:bytes = ffmpeg_process.stdout.read(read_size)
+                rz = min(read_size,(len(buffer)-buffer_len)*2)
+                buf:bytes = ffmpeg_process.stdout.read(rz)
                 if acnt==0:
                     print(f"[Whisper]started audio")
                 acnt+=1
@@ -395,7 +439,13 @@ class MlxWhisperProcess:
                     buffer_len+=sz
                     # transcrib
                     prompt = ' '.join( [s.text for s in prev_segments] ) if len(prev_segments)>0 else None
+                    st = time.time()
                     segments = transcribe(buffer[:buffer_len], model=model,lang=lang, prompt=prompt, logger=logger)
+                    et = time.time()
+                    tt = et-st
+                    seg_sec = int( min(max(1.0,tt+1),10) )
+                    seg_size = int( seg_sec * SAMPLE_RATE )
+                    read_size = int(seg_size*2)
                 else:
                     segments = []
 

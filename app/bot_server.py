@@ -8,6 +8,7 @@ import wave
 import tempfile
 import numpy as np
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from text_to_voice import TtsEngine
 from rec_util import audio_to_wave_bytes
 
@@ -17,6 +18,8 @@ class VoiceRes:
 
     CMD_ALL:int = 1
     CMD_APPEND:int = 2
+    CMD_LLM_ON:int = 10
+    CMD_LLM_OFF:int = 11
 
     def __init__(self, cmd:int, text:str, voice:bytes ):
         self.cmd = cmd
@@ -33,7 +36,7 @@ class Bot:
         self.queue:Queue = Queue()
         self.th = None
         self.run = False
-        self.global_messages:list[dict] = []
+        self.global_messages:list[ChatCompletionMessageParam] = []
         self.mode = mode
         self._orig_texts:list[str] = []
         self._temp_texts:list[str] = []
@@ -81,19 +84,29 @@ class Bot:
                 # off,summary,translation,conversation
                 if self.mode == Bot.MODE_SUMMARY:
                     if (time.time()-last_time)>15.0 and len(self._orig_texts)!=last_num:
-                        self.summarize_text()
+                        try:
+                            self.queue.put(VoiceRes(VoiceRes.CMD_LLM_ON,'a',b''))
+                            self.summarize_text()
+                        finally:
+                            self.queue.put(VoiceRes(VoiceRes.CMD_LLM_OFF,'a',b''))
                         last_num = len(self._orig_texts)
                         last_time = time.time()
                 elif self.mode == Bot.MODE_TRANSLATION:
-                    if (time.time()-last_time)>10.0 and len(self._orig_texts)!=last_num:
-                        self.translate_text()
+                    if (time.time()-last_time)>5.0 and len(self._orig_texts)!=last_num:
+                        try:
+                            self.queue.put(VoiceRes(VoiceRes.CMD_LLM_ON,'a',b''))
+                            self.translate_text()
+                        finally:
+                            self.queue.put(VoiceRes(VoiceRes.CMD_LLM_OFF,'a',b''))
                         last_num = len(self._orig_texts)
                         last_time = time.time()
                 elif self.mode == Bot.MODE_CONVERSATION:
-                    if (time.time()-last_time)>25.0 and len(self._orig_texts)!=last_num:
-                        text = 'やっほー!'
-                        b,m = self.aaa(text)
-                        self.queue.put( VoiceRes(VoiceRes.CMD_APPEND,text,b))
+                    if (time.time()-last_time)>1.0 and len(self._user_messages)>0:
+                        try:
+                            self.queue.put(VoiceRes(VoiceRes.CMD_LLM_ON,'a',b''))
+                            self.response_text()
+                        finally:
+                            self.queue.put(VoiceRes(VoiceRes.CMD_LLM_OFF,'a',b''))
                         last_num = len(self._orig_texts)
                         last_time = time.time()
                 else:
@@ -167,7 +180,34 @@ class Bot:
         res = VoiceRes(VoiceRes.CMD_ALL,text=restext,voice=b'')
         self.queue.put(res)
 
-    def aaa(self,text):
+    def response_text(self):
+        """音声認識で会話"""
+        prompt = """
+テンポ良い短いセンテンスで会話して下さい。
+"""
+        # OpenAI クライアントの初期化（環境変数から自動的にAPI keyを取得）
+        client = OpenAI()
+        local_messages:list[ChatCompletionMessageParam] = []
+        local_messages.append({"role": "system", "content": prompt})
+        local_messages.extend( self.global_messages )
+        for msg in self._user_messages:
+            local_messages.append({"role": "user", "content":msg})
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=local_messages
+        )
+        restext = response.choices[0].message.content or ""
+
+        b,m = self.text_to_voice(restext)
+        res = VoiceRes(VoiceRes.CMD_APPEND,text=restext,voice=b)
+        for msg in self._user_messages:
+            self.global_messages.append({"role": "user", "content":msg})
+        self._user_messages = []
+        self.global_messages.append({"role":"assistant","content":restext})
+        self.queue.put(res)
+
+    def text_to_voice(self,text):
         audio_data,model = self.tts._text_to_audio_by_voicevox(text,sampling_rate=SAMPLE_RATE)
         if audio_data is not None:
             return audio_to_wave_bytes(audio_data, sampling_rate=SAMPLE_RATE, ch=1), model

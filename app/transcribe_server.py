@@ -27,7 +27,7 @@ def calculate_xor_checksum(data: bytes) -> int:
         checksum ^= byte  # 各バイトをXOR演算
     return checksum
 
-def create_app():
+async def create_app():
     global_status:bool = True
     app = Flask(__name__)
     #app.config['SECRET_KEY'] = 'secret!'
@@ -54,20 +54,39 @@ def create_app():
             self.client_id = clientid
             self.whisper_proc = MlxWhisperProcess( logfile=f'tmp/client_{clientid}.log')
             self.vot_proc = Bot()
-            self._run=False
+            self._run:int=0
+            self._audioid:int = 0
             self._t1:Task|None = None
             self._t2:Task|None = None
             self.mode = 'off'  # デフォルトモード
             self.lang = 'off'  # デフォルト言語
             self._accept_audio:str|None = None
 
+        async def connect(self):
+            pass
+
         async def start(self):
-            self._run=True
+            self._audioid=( a:=self._audioid+1 )
+            self._run = a
             loop = asyncio.get_event_loop()
             if self._t1 is None:
-                self._t1 = loop.create_task( self._task_stt() )
+                self._t1 = loop.create_task( self._task_stt(a) )
             if self._t2 is None:
-                self._t2 = loop.create_task( self._task_vod() )
+                self._t2 = loop.create_task( self._task_vod(a) )
+
+        async def stop(self):
+            self._run=self._audioid+1
+            self.whisper_proc.stop()
+            self.vot_proc.stop()
+            if self._t1 is not None:
+                self._t1.cancel()
+                self._t1 = None
+            if self._t2 is not None:
+                self._t2.cancel()
+                self._t2 = None
+
+        async def disconnect(self):
+            await self.stop()
 
         def send_ev(self,msg,data):
             socketio.emit('ev', {'msg': msg, 'data': data}, to=self.client_id)
@@ -84,21 +103,22 @@ def create_app():
             if self.vot_proc:
                 self.vot_proc.set_mode(mode)
 
-        def append_audio(self,seq:int,typ:str,audio:bytes) ->str:
+        async def append_audio(self,seq:int,typ:str,audio:bytes) ->str:
             if self._accept_audio is None or self._accept_audio!='':
-                self._accept_audio = check_audio(audio, 16000)
+                self._accept_audio = await check_audio(audio, 16000)
             if self._accept_audio is not None and self._accept_audio!='':
                 return self._accept_audio
             if self.whisper_proc:
-                self.whisper_proc.append_audio(seq,typ,audio)
+                sz = self.whisper_proc.append_audio(seq,typ,audio)
+                self.send_ev( 'bufsize', {'size': sz} )
             return ''
 
-        async def _task_stt(self):
-            print(f"[SESSION]{self.client_id}:stt start")
+        async def _task_stt(self,aid):
+            print(f"[SESSION]{self.client_id}-{aid}:stt start")
             self.whisper_proc.start()
             """whisper_procからの結果を読み取ってクライアントに送信するタスク"""
             try:
-                while self._run and self.client_id in client_sessions:  # クライアントが接続中の間だけ実行
+                while self._run==aid and self.client_id in client_sessions:  # クライアントが接続中の間だけ実行
                     try:
                         fixed_text = ''
                         result = await self.whisper_proc.read()
@@ -116,16 +136,16 @@ def create_app():
             except Exception as ex:
                 print(f"Error in read_transcription for client {self.client_id}: {str(ex)}")
             finally:
-                self._run = False
+                self._run = aid+1
                 self.whisper_proc.stop()
-                print(f"[SESSION]{self.client_id}:end")
+                print(f"[SESSION]{self.client_id}-{aid}:stt end {self._run}")
 
-        async def _task_vod(self):
-            print(f"[SESSION]{self.client_id}:vod start")
+        async def _task_vod(self,aid):
+            print(f"[SESSION]{self.client_id}-{aid}:vod start")
             self.vot_proc.start()
             """whisper_procからの結果を読み取ってクライアントに送信するタスク"""
             try:
-                while self._run and self.client_id in client_sessions:  # クライアントが接続中の間だけ実行
+                while self._run==aid and self.client_id in client_sessions:  # クライアントが接続中の間だけ実行
                     try:
                         cmd, restext, voice = await self.vot_proc.get(timeout=0.2)
                         if restext != '' or len(voice)>0:
@@ -133,6 +153,9 @@ def create_app():
                                 socketio.emit('audio_stream', {'text': restext, 'audio': voice}, to=self.client_id)
                             elif cmd==VoiceRes.CMD_ALL:
                                 socketio.emit('result_text', {'text': restext, 'audio': voice}, to=self.client_id)
+                            elif cmd==VoiceRes.CMD_LLM_ON or cmd==VoiceRes.CMD_LLM_OFF:
+                                self.send_ev( 'llmStat', { 'stat': cmd==VoiceRes.CMD_LLM_ON } )
+                                pass
                     except Exception as ex:
                         print(f"Error in read_transcription loop for client {self.client_id}: {str(ex)}")
                     await asyncio.sleep(0.1)  # 短い待機時間を入れてCPU使用率を抑える
@@ -140,19 +163,8 @@ def create_app():
                 print(f"Error in read_transcription for client {self.client_id}: {str(ex)}")
             finally:
                 self.vot_proc.stop()
-                self._run = False
-                print(f"[SESSION]{self.client_id}:end")
-
-        def stop(self):
-            self._run=False
-            self.whisper_proc.stop()
-            self.vot_proc.stop()
-            if self._t1 is not None:
-                self._t1.cancel()
-                self._t1 = None
-            if self._t2 is not None:
-                self._t2.cancel()
-                self._t2 = None
+                self._run = aid+1
+                print(f"[SESSION]{self.client_id}-{aid}:vod end {self._run}")
 
     @app.route('/')
     def whisper_page():
@@ -183,7 +195,7 @@ def create_app():
                 session:ClientSession = ClientSession(client_id)
                 client_sessions[client_id] = session
                 # 非同期タスクを作成
-                global_event_loop.create_task(session.start())
+                global_event_loop.create_task(session.connect())
         except Exception as ex:
             print(f"Error in handle_connect: {str(ex)}")
             emit('error', {'error': str(ex)})
@@ -202,8 +214,11 @@ def create_app():
                     # 非同期タスクを作成
                     global_event_loop.create_task(session.update_configure(data))
                     return
-                elif cmd == 'aaa':
-                    pass
+                elif cmd == 'audioStart':
+                    global_event_loop.create_task(session.start())
+                    return
+                elif cmd == 'audioStop':
+                    global_event_loop.create_task(session.stop())
                     return
             print(f"[API] invalid cmd {raw_message}")
         except Exception as ex:
@@ -221,7 +236,8 @@ def create_app():
                 if isinstance(data,bytes):
                     seq = 0
                     typ = ''
-                    msg = session.append_audio(seq,typ,data)
+                    fut = asyncio.run_coroutine_threadsafe(session.append_audio(seq, typ, data), global_event_loop)
+                    msg = fut.result()  # 結果を受け取る
         except Exception as e:
             msg = f"Error handling audio data for client {client_id}: {str(e)}"
         if msg:
@@ -242,7 +258,8 @@ def create_app():
                     seq = 0
                     typ = ''
                     buf:bytes = base64.b64decode(data)
-                    msg = session.append_audio(seq,typ,buf)
+                    fut = asyncio.run_coroutine_threadsafe(session.append_audio(seq,typ,buf),global_event_loop)
+                    msg = fut.result()
         except Exception as e:
             msg = f"Error handling audio data for client {client_id}: {str(e)}"
         if msg:
@@ -263,34 +280,13 @@ def create_app():
                     typ = data.get('type','')
                     b64 = data.get('base64','')
                     buf:bytes = base64.b64decode(b64)
-                    msg = session.append_audio(seq,typ,buf)
+                    fut = asyncio.run_coroutine_threadsafe(session.append_audio(seq,typ,buf),global_event_loop)
+                    msg = fut.result()
         except Exception as e:
             msg = f"Error handling audio data for client {client_id}: {str(e)}"
         if msg:
             print(f"{msg}")
             emit('audio_error', {'error': msg})
-
-    # 音声チャンクの保存
-    @app.route('/audio_post', methods=['POST'])
-    def upload_audio_chunk():
-        msg = 'invalid data'
-        try:
-            client_id = request.form.get('sid')
-            audio_chunk = request.files.get('audio_chunk')
-            if client_id is not None and audio_chunk is not None:
-                session = client_sessions.get(client_id)
-                if session is not None:
-                    buf = audio_chunk.read()
-                    seq = 0
-                    typ = ''
-                    msg = session.append_audio(seq,typ,buf)
-                    if msg=='':
-                        return jsonify({'message': 'Chunk saved'}), 200
-        except Exception as e:
-            msg = f"Error handling audio data for client {client_id}: {str(e)}"
-        if msg:
-            print(f"{msg}")
-        return jsonify({'error': msg}), 400
 
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -301,10 +297,10 @@ def create_app():
             print(f'Client disconnected: {client_id}')
             session = client_sessions.pop(client_id)
             if session:
-                session.stop()
+                global_event_loop.create_task(session.disconnect())
         except Exception as e:
             print(f"Error handling disconnect for client {client_id}: {str(e)}")
-            emit('error', {'error': str(e)})
+            #emit('error', {'error': str(e)})
 
     @app.route('/process_audio', methods=['POST'])
     def process_audio_route():
@@ -336,10 +332,10 @@ def create_app():
 
     return app, socketio
 
-def main():
+async def main():
     try:
-        import tracemalloc
-        tracemalloc.start()
+        # import tracemalloc
+        # tracemalloc.start()
 
         # setting.envファイルが存在する場合、環境変数として読み込む
         if os.path.exists('setting.env'):
@@ -353,10 +349,10 @@ def main():
         # else:
         #     ssl_context=None
         ssl_context = None
-        app, socketio = create_app()
+        app, socketio = await create_app()
         socketio.run(app, host='0.0.0.0', port=port, ssl_context=ssl_context, debug=True)
     except Exception as ex:
         print(f"{ex}")
 
 if __name__ == '__main__':
-    main()
+    asyncio.run( main() )

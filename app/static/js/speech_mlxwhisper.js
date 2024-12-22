@@ -30,43 +30,28 @@ function getAllSupportedMimeTypes(...mediaTypes) {
       ),
     )].filter(variation => MediaRecorder.isTypeSupported(variation))
   }
-  
-// To get all mime types, use: getAllSupportedMimeTypes() 
-//   console.log('Video mime types:')
-//   console.log(getAllSupportedMimeTypes('video'))
-//   console.log('Audio mime types:')
-//   console.log(getAllSupportedMimeTypes('audio'))
+
+function test_mimetype() {
+    // To get all mime types, use: getAllSupportedMimeTypes() 
+    console.log('Video mime types:')
+    console.log(getAllSupportedMimeTypes('video'))
+    console.log('Audio mime types:')
+    console.log(getAllSupportedMimeTypes('audio'))
+}
   /*
     'webm;codecs=opus', 'audio/webm;codecs=pcm',
-    'audio/webm;codecs="opus, opus"', 'audio/webm;codecs="opus, pcm"', 'audio/webm;codecs="pcm, opus"', 'audio/webm;codecs="pcm, pcm"',
+    'audio/webm;codecs="opus, opus"',
+    'audio/webm;codecs="opus, pcm"',
+    'audio/webm;codecs="pcm, opus"', 
+    'audio/webm;codecs="pcm, pcm"',
     'audio/mp4;codecs=opus',
-    'audio/mp4;codecs="opus, opus"']
+    'audio/mp4;codecs="opus, opus"'
    */
   /*
-    audio/mp4", "audio/mp4;codecs=avc1", "audio/mp4;codecs=mp4a", "audio/mp4;codecs=\"avc1, avc1\"", "audio/mp4;codecs=\"avc1, mp4a\"", "audio/mp4;codecs=\"mp4a, avc1\"", "audio/mp4;codecs=\"mp4a, mp4a\""
+    audio/mp4", "audio/mp4;codecs=avc1", "audio/mp4;codecs=mp4a",
+     "audio/mp4;codecs=\"avc1, avc1\"", "audio/mp4;codecs=\"avc1, mp4a\"",
+      "audio/mp4;codecs=\"mp4a, avc1\"", "audio/mp4;codecs=\"mp4a, mp4a\""
   */
-
-// Cookie操作のユーティリティ関数
-const xCookieUtil = {
-    setCookie: function(name, value, days = 30) {
-        const d = new Date();
-        d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
-        const expires = "expires=" + d.toUTCString();
-        document.cookie = name + "=" + value + ";" + expires + ";path=/";
-    },
-    
-    getCookie: function(name) {
-        const cookieName = name + "=";
-        const cookies = document.cookie.split(';');
-        for(let i = 0; i < cookies.length; i++) {
-            let cookie = cookies[i].trim();
-            if (cookie.indexOf(cookieName) === 0) {
-                return cookie.substring(cookieName.length, cookie.length);
-            }
-        }
-        return "";
-    }
-};
 
 function calculateXORChecksum(data) {
     let checksum = 0;
@@ -87,6 +72,10 @@ async function blobToBase64(blob) {
         reader.readAsDataURL(blob);
     });
 }
+function asleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 class WhisperController {
     constructor() {
         this.socket = null;
@@ -96,12 +85,8 @@ class WhisperController {
         this.audioContext = null;
         this.audioChunks = [];
         this.stream = null;
-        this.recog_lang = 'en';
         this.fragment = [];
         this.isListening = false; // 音声認識がアクティブかどうかを追跡
-
-        // DOM要素の取得
-        this.speechControl = document.getElementById('speechControl');
 
         // 音声録音の設定
         this.constraints = {
@@ -113,117 +98,38 @@ class WhisperController {
                 sampleRate: 16000
             }
         };
-
-        // 保存された設定の読み込み
-        //this.loadSavedSettings();
         this.setupUiHandler();
     }
 
-    loadSavedSettings() {
-        // 言語設定の読み込み
-        // const savedLang = CookieUtil.getCookie('recogLang');
-        // if (savedLang) {
-        //     this.values['recogLang'] = savedLang;
-        //     const elem = document.getElementById('recogLang');
-        //     if (elem) {
-        //         elem.value = savedLang;
-        //     }
-        // }
-        // for( const key in this.constraints.audio ) {
-        //     const elem = document.getElementById(key);
-        //     const value = CookieUtil.getCookie(key);
-        //     if (elem && value ) {
-        //         this.constraints.audio[key] = value;
-        //         elem.checked = value;
-        //     }
-        // }
-        // モード設定の読み込み
-        // const llmMode = CookieUtil.getCookie('llmMode');
-        // if (llmMode) {
-        //     this.values['llmMode'] = llmMode;
-        //     const elem = document.querySelector(`input[name="llmMode"][value="${llmMode}"]`);
-        //     if (elem) {
-        //         elem.value = llmMode;
-        //         // エコーキャンセレーションの設定を更新
-        //         this.constraints.audio.echoCancellation = llmMode === 'conversation';
-        //     }
-        // }
-    }
-
     setupUiHandler() {
-        // document.getElementById('recogLang').addEventListener('change', (event) => {
-        //     const newLang = event.target.value;
-        //     this.recog_lang = newLang;
-        //     // 言語設定をCookieに保存
-        //     CookieUtil.setCookie('recogLang', newLang);
-        //     // 言語変更をサーバーに通知
-        //     this.values['recogLang'] = newLang
-        //     this.sendValues().then(()=>{});
-        // });
         window.uiController.uiHandler('recogStart', async (value) => {
-            this.startRecording();
+            await this.startRecording();
         } )
         window.uiController.uiHandler('recogStop', async (value) => {
-            this.stopRecording();
+            await this.stopRecording();
         } )
 
-        // this.speechControl.onclick = () => {
-        //     window.uiController.handleStartButtonClick((shouldStart) => {
-        //         if (shouldStart) {
-        //             this.startRecording();
-        //         } else {
-        //             this.stopRecording();
-        //         }
-        //     });
-        // };
-
         window.uiController.uiHandler('recogLang', async (value) => {
-            console.log('[TEST] recogLang ',value);
             // サーバーに通知
             this.values['recogLang'] = value
-            this.sendValues().then(()=>{});
+            await this.sendValues();
         })
 
         // audio trackの設定を変更する
         for( const key in this.constraints.audio ) {
             window.uiController.uiHandler(key, async (value) => {
-                console.log('[TEST] ', key, value );
                 if( this.constraints.audio[key] != value) {
                     this.constraints.audio[key] = value;
-                    this.applyConstraints();
+                    await this.applyConstraints();
                 }
             });
         }
         
         window.uiController.uiHandler('llmMode', async (value) => {
-            console.log('[TEST] llmMode ',value);
             // サーバーに通知
             this.values['llmMode'] = value
-            this.sendValues().then(()=>{});
+            await this.sendValues();
         })
-        // // モード選択に応じた設定
-        // document.querySelectorAll('input[name="llmMode"]').forEach((radio) => {
-        //     radio.addEventListener('change', async (event) => {
-        //         const llmMode = event.target.value;
-        //         // モード設定をCookieに保存
-        //         CookieUtil.setCookie('llmMode', llmMode);
-        //         this.values['llmMode'] = llmMode
-        //         this.sendValues().then(()=>{});
-                    
-        //         let upd = false
-        //         if (llmMode === 'conversation') {
-        //             upd = !this.constraints.audio.echoCancellation
-        //             this.constraints.audio.echoCancellation = true;
-        //         } else {
-        //             upd = this.constraints.audio.echoCancellation
-        //             this.constraints.audio.echoCancellation = false;
-        //         }
-        //         // audio trackの設定を変更する
-        //         if (upd) {
-        //             this.applyConstraints();
-        //         }
-        //     });
-        // });
     }
 
     // WebSocket接続を初期化
@@ -262,14 +168,27 @@ class WhisperController {
     onEv(event) {
         const cmd = event['msg']
         const data = event['data']
-        if( cmd == 'transcription' ) {
+        if( cmd == 'bufsize' ) {
+            sz = data.get('size')
+            if(sz) {
+                window.uiController.updateToUI('bufsize',sz)
+            }
+        } else if( cmd == 'transcription' ) {
             this.onTranscription(data)
-        }else if( cmd=='resultText' ) {
+        } else if( cmd=='resultText' ) {
             
-        }else if( cmd=='audioError' ) {
+        } else if( cmd=='llmStat' ) {
+            if( data['stat'] ) {
+                window.uiController.updateToUI('llmStatus',true)
+            } else {
+                window.uiController.updateToUI('llmStatus',false)
+            }
+        } else if( cmd=='audioError' ) {
             const msg = data.error
             console.log('socketio recv audio err',msg);
             this.stopRecording() 
+        } else {
+            console.log('ERROR',cmd)
         }
     }
     onTranscription(data) {
@@ -310,7 +229,7 @@ class WhisperController {
         }
     }
     // audio trackの設定を変更する
-    applyConstraints() {
+    async applyConstraints() {
         if (this.isListening && this.stream) {
             const this_const = JSON.stringify(this.constraints);
             let upd = false;
@@ -323,14 +242,20 @@ class WhisperController {
                 }
             });
             if( upd ) {
-                this.stopRecording();
-                this.startRecording();    
+                console.log("aaa")
+                await this.stopRecording();
+                await asleep(500)
+                console.log("bbb")
+                await this.startRecording();    
             }
         }
     }
 
     async playAudio(audioData) {
         try {
+            if( audioData.byteLength<=0 ) {
+                return;
+            }
             if (!this.audioContext) {
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -340,10 +265,13 @@ class WhisperController {
             if (this.audioContext.state === 'suspended') {
                 this.audioContext.resume();
             }
+            console.log('[play]decode',audioData)
             const audioBuffer = await this.audioContext.decodeAudioData(audioData);
             const source = this.audioContext.createBufferSource();
             source.buffer = audioBuffer;
+            console.log('[play]connect')
             source.connect(this.audioContext.destination);
+            console.log('[play]start')
             source.start();
         } catch (error) {
             console.error('Error decoding or playing audio:', error);
@@ -368,7 +296,8 @@ class WhisperController {
             this.isListening = true; // 音声認識をアクティブに設定
             // WebSocket接続を初期化
             await this.initializeWebSocket();
-            
+            console.log('[mediaRec]start')
+            await this.asend_ev('audioStart',this.values); 
             // マイクへのアクセスを要求
             this.stream = await navigator.mediaDevices.getUserMedia(this.constraints);
             // MediaRecorderの設定
@@ -378,14 +307,15 @@ class WhisperController {
             options.mimeType = 'audio/mp4;codecs=opus'
             this.mediaRecorder = new MediaRecorder(this.stream);
 
+            const send = 1;
             this.mediaRecorder.ondataavailable = async (event) => {
-                if (this.isListening && event.data.size > 0) {
+                if (event.data.size > 0) {
                     try {
                         // WebSocketを通じてサーバーに音声データを送信
                         if (this.socket && this.socket.connected) {
                             const seq = this.media_seq++;
                             const type = event.data.type;
-                            const send = 1;
+
                             //console.log('send mode',send)
                             if( send==1 ) {
                                 // ダイレクト
@@ -398,14 +328,6 @@ class WhisperController {
                             } else if( send==4 ) {
                                 const b64 = await blobToBase64(event.data)
                                 this.socket.emit('audio_b64', b64 )
-                            } else if( send==5 ) {
-                                const formData = new FormData();
-                                formData.append('sid', this.socket.id )
-                                formData.append('audio_chunk', event.data, `chunk_${seq}.webm`);
-                                fetch('/audio_post', { method: 'POST', body: formData })
-                                  .then(response => response.json())
-                                  .then(data => console.log('サーバーからの応答:', data))
-                                  .catch(error => console.error('エラー:', error));
                             } else if( send==6 ) {
                                 this.socket.emit('audio_data', {
                                     'seq':seq,
@@ -419,13 +341,16 @@ class WhisperController {
                     }
                 }
             };
-
+            this.mediaRecorder.onstop = async (event) => {
+                console.log('[mediaRec]stopped')
+            };
             // 1秒ごとにデータを取得するように設定
             this.mediaRecorder.start(1000);
 
             if (!this.audioContext) {
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
+
             window.uiController.updateToUI('recogStat','start')
         } catch (error) {
             this.handleError(error);
@@ -437,17 +362,16 @@ class WhisperController {
             console.log('call stop')
             this.isListening = false; // 音声認識を非アクティブに設定
             if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-                // MediaRecorderを停止する前に最後のデータを送信
+                console.log('mediaRecorder stop')
                 this.mediaRecorder.stop();
-                // 最後のデータが送信されるのを待つ
-                await new Promise(resolve => {
-                    this.mediaRecorder.addEventListener('stop', resolve, { once: true });
-                });
             }
             // 音声ストリームを停止
             if (this.stream) {
+                console.log('stream stop')
                 this.stream.getTracks().forEach(track => track.stop());
             }
+            await asleep(200)
+            await this.asend_ev('audioStop',this.values); 
             window.uiController.updateToUI('recogStat','stop');
         } catch (error) {
             this.handleError(error);

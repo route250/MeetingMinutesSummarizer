@@ -30,6 +30,7 @@ class UIController {
         this.event_from_ui = {}
         this.event_to_ui = {}
         this.speechControl = document.getElementById('speechControl');
+        this.bufsize = document.getElementById('bufsize');
         this.llmStatusDiv = document.getElementById('llmStatus');
         this.transcriptArea = document.getElementById('transcriptArea');
         this.summaryArea = document.getElementById('summaryArea');
@@ -129,10 +130,28 @@ class UIController {
                 radio.checked = radio.value===value;
             })
         }
+
+        this.event_to_ui['llmStatus'] = async (value) => {
+            if( value ) {
+                this.llmStatusDiv.textContent = 'LLM: 処理中';
+                this.llmStatusDiv.classList.add('processing');
+            } else {
+                this.llmStatusDiv.textContent = 'LLM: 待機中';
+                this.llmStatusDiv.classList.remove('processing');
+            }
+        }
+        this.event_to_ui['bufsize'] = async (value) => {
+            if( value ) {
+                this.bufsize.textContent = value;
+            }
+        }
     }
 
     uiHandler( key, func ) {
         this.event_from_ui[key] = func;
+        if( key in this.values) {
+            func(this.values[key]).then( ()=>{} )
+        }
     }
 
     updateFromUI( key, value ) {
