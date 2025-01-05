@@ -1,6 +1,7 @@
 
 import asyncio
 import time
+import traceback
 from queue import Queue, Empty
 from io import BytesIO
 from threading import Thread
@@ -114,7 +115,7 @@ class Bot:
 
                 time.sleep(1.0)
         except:
-            pass
+            traceback.print_exc()
 
     def translate_text(self):
         """テキストを日本語に翻訳する"""
@@ -183,7 +184,7 @@ class Bot:
     def response_text(self):
         """音声認識で会話"""
         prompt = """
-テンポ良い短いセンテンスで会話して下さい。
+プロンプトに囚われず自由に会話して下さい。
 """
         # OpenAI クライアントの初期化（環境変数から自動的にAPI keyを取得）
         client = OpenAI()

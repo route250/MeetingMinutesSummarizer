@@ -135,6 +135,34 @@ class Seg:
     def json(self):
         return {'seek': self.seek, 'start':self.start, 'end':self.end, 'isFixed':self.isFixed, 'text': self.text,
                  'prob':self.avg_logprob, 'comp':self.compression_ratio, 'no_speech':self.no_speech_prob }
+    @staticmethod
+    def is_recog_success_dict( seg:dict|None ) ->bool:
+        try:
+            if isinstance(seg,dict):
+                return Seg.is_recog_success( seg.get('text'), seg.get('avg_logprob'), seg.get('compression_ratio'), seg.get('no_speech_prob') )
+        except:
+            pass
+        return False
+    @staticmethod
+    def is_recog_success( text:str|None, avg_logprob:float|None, compression_ratio:float|None, no_speech_prob:float|None ) ->bool:
+        if not isinstance(text,str) or len(text.strip())==0:
+            return False
+        if not isinstance(avg_logprob,float) or not isinstance(compression_ratio,float) or not isinstance(no_speech_prob,float):
+            return False
+        if avg_logprob<-0.5:
+            return False # 認識の信頼性が低い
+        if compression_ratio<0.5 or 2.0<compression_ratio:
+            return False # 
+        if no_speech_prob>0.2:
+            return False
+        if avg_logprob>-0.7:
+            return True
+        if 0.8<compression_ratio and compression_ratio<1.4:
+            return True
+        if 0.1>no_speech_prob:
+            return True
+        return False
+        
 
 def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_TINY_EN, lang:str='', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
 
@@ -159,7 +187,7 @@ def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_TINY_EN, lang:str=''
             Seg( id=seg.get('id'), seek=seg.get('seek'),
                  start = seg.get('start'), end = seg.get('end'), text = seg.get('text'),
                  avg_logprob=seg.get('avg_logprob'), compression_ratio=seg.get('compression_ratio'),no_speech_prob=seg.get('no_speech_prob'))
-            for seg in segs if seg.get('text') and seg.get('no_speech_prob',0.0)<0.1
+            for seg in segs if Seg.is_recog_success_dict(seg)
         ]
     return []
 
@@ -231,7 +259,10 @@ async def check_audio(audio:bytes,size:int) ->str:
                     return ''
                 return 'Can not convert audio'
             finally:
-                proc.kill()
+                try:
+                    proc.kill()
+                except Exception as ex:
+                    pass
     except Exception as ex:
         traceback.print_exc()
         return f"Exception:{str(ex)}"

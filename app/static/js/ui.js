@@ -40,9 +40,6 @@ class UIController {
         this.lastSummaryUpdate = Date.now();
         this.lastText = '';
 
-        // 15秒ごとに議事録更新をチェック
-        setInterval(() => this.checkForSummaryUpdate(), 15000);
-
         // ウィンドウリサイズ時のテキストエリア調整を削除
         // window.addEventListener('resize', () => this.adjustTextAreaHeights());
         // 初期化時にも高さを調整（DOMの読み込み完了後）を削除
@@ -75,7 +72,7 @@ class UIController {
             }
         }
     // lang
-        const recogLang = CookieUtil.getCookie('recogLang','en-US');
+        const recogLang = CookieUtil.getCookie('recogLang','English');
         this.values['recogLang'] = recogLang;
         const elem = document.getElementById('recogLang');
         if (elem) {
@@ -174,30 +171,6 @@ class UIController {
         }
     }
 
-    /*
-    adjustTextAreaHeights() {
-        const headerHeight = document.querySelector('.header').offsetHeight;
-        const controlsHeight = document.querySelector('.recognition-controls').offsetHeight;
-        const summaryControlsHeight = document.querySelector('.summary-controls').offsetHeight;
-        const windowHeight = window.innerHeight;
-        const bodyPadding = 20; // body padding
-        const containerGap = 10; // container gap
-        const textAreaPadding = 15; // textarea padding
-        const borderWidth = 4; // border width (2px * 2)
-        
-        // 利用可能な高さを計算（余白や境界線を考慮）
-        const availableHeight = windowHeight - headerHeight - Math.max(controlsHeight, summaryControlsHeight) 
-            - (bodyPadding * 2) - containerGap - (textAreaPadding * 2) - borderWidth - 15; // 5pxの追加マージン
-        
-        // テキストエリアに高さを設定
-        if (availableHeight > 0) {
-            console.log( 'h:'+availableHeight )
-            this.transcriptArea.style.height = `${availableHeight}px`;
-            this.summaryArea.style.height = `${availableHeight}px`;
-        }
-    }
-    */
-
     updateUIForRecognitonState(st) {
         if( this.isRecording ) {
             if( st==1 ) {
@@ -245,54 +218,6 @@ class UIController {
 
         // 最下部にスクロール
         this.transcriptArea.scrollTop = this.transcriptArea.scrollHeight;
-    }
-
-    async checkForSummaryUpdate() {
-        const currentText = this.transcriptArea.textContent.trim()
-        if( this.lastText == currentText ) {
-            return;
-        }
-
-        const llmMode = this.values['llmMode'];
-        if (!llmMode || llmMode === 'off') {
-            this.llmStatusDiv.textContent = 'LLM: OFF';
-            return;
-        }
-        return;
-        const currentTime = Date.now();
-        if (currentTime - this.lastSummaryUpdate >= 15000) {
-            this.lastSummaryUpdate = currentTime;
-            this.lastText = currentText
-            try {
-                this.llmStatusDiv.textContent = 'LLM: 処理中';
-                this.llmStatusDiv.classList.add('processing');
-
-                const response = await fetch('/process_audio', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        text: currentText,
-                        mode: llmMode
-                    })
-                });
-
-                const data = await response.json();
-                if (data.error) {
-                    console.error('処理エラー:', data.error);
-                    this.llmStatusDiv.textContent = 'LLM: エラー';
-                } else {
-                    this.updateSummaryUI(data.response);
-                    this.llmStatusDiv.textContent = 'LLM: 待機中';
-                }
-            } catch (error) {
-                console.error('処理中にエラーが発生:', error);
-                this.llmStatusDiv.textContent = 'LLM: エラー';
-            } finally {
-                this.llmStatusDiv.classList.remove('processing');
-            }
-        }
     }
 
     updateSummaryUI(summary) {
