@@ -81,10 +81,12 @@ class Bot:
         try:
             last_time:float = 0
             last_num = 0
+            last_temp_text = ''
             while self.run:
                 # off,summary,translation,conversation
                 if self.mode == Bot.MODE_SUMMARY:
-                    if (time.time()-last_time)>15.0 and len(self._orig_texts)!=last_num:
+                    temp_text = ' '.join(self._temp_texts)
+                    if (time.time()-last_time)>15.0 and (len(self._orig_texts)!=last_num or temp_text!=last_temp_text):
                         try:
                             self.queue.put(VoiceRes(VoiceRes.CMD_LLM_ON,'a',b''))
                             self.summarize_text()
@@ -93,13 +95,15 @@ class Bot:
                         last_num = len(self._orig_texts)
                         last_time = time.time()
                 elif self.mode == Bot.MODE_TRANSLATION:
-                    if (time.time()-last_time)>5.0 and len(self._orig_texts)!=last_num:
+                    temp_text = ' '.join(self._temp_texts)
+                    if (time.time()-last_time)>5.0 and (len(self._orig_texts)!=last_num or temp_text!=last_temp_text):
                         try:
                             self.queue.put(VoiceRes(VoiceRes.CMD_LLM_ON,'a',b''))
                             self.translate_text()
                         finally:
                             self.queue.put(VoiceRes(VoiceRes.CMD_LLM_OFF,'a',b''))
                         last_num = len(self._orig_texts)
+                        last_temp_text = temp_text
                         last_time = time.time()
                 elif self.mode == Bot.MODE_CONVERSATION:
                     if (time.time()-last_time)>1.0 and len(self._user_messages)>0:

@@ -158,7 +158,6 @@ async def create_app():
                                 socketio.emit('result_text', {'text': restext, 'audio': voice}, to=self.client_id)
                             elif cmd==VoiceRes.CMD_LLM_ON or cmd==VoiceRes.CMD_LLM_OFF:
                                 self.send_ev( 'llmStat', { 'stat': cmd==VoiceRes.CMD_LLM_ON } )
-                                pass
                     except Exception as ex:
                         print(f"Error in read_transcription loop for client {self.client_id}: {str(ex)}")
                     await asyncio.sleep(0.1)  # 短い待機時間を入れてCPU使用率を抑える

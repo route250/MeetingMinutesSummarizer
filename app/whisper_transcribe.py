@@ -140,8 +140,8 @@ class Seg:
         try:
             if isinstance(seg,dict):
                 return Seg.is_recog_success( seg.get('text'), seg.get('avg_logprob'), seg.get('compression_ratio'), seg.get('no_speech_prob') )
-        except:
-            pass
+        except Exception as ex:
+            print(f"ERROR:is_recog_success_dict {str(ex)}")
         return False
     @staticmethod
     def is_recog_success( text:str|None, avg_logprob:float|None, compression_ratio:float|None, no_speech_prob:float|None ) ->bool:
@@ -163,6 +163,12 @@ class Seg:
             return True
         return False
         
+class TextSeg(NamedTuple):
+    seq:int
+    start:float
+    end:float
+    text:str
+    audio:bytes
 
 def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_TINY_EN, lang:str='', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
 
@@ -271,9 +277,9 @@ class MlxWhisperProcess:
     def __init__(self, *, logfile:str|None=None):
         self._transcribe_closed:bool = False
         self._whisper_process = None
-        self._v_putsz:int = 0
-        self._v_getsz = Value('i',0)
-        self._transcribe_queue:Queue = Queue()
+        self._share_bufsz = Array('i',4)
+        self._share_id = Value('i',0)
+        self._transcribe_queue:Queue[tuple[list[TextSeg],list[str]]] = Queue()
         self._audio_queue:Queue = Queue()
         self._logfile:str|None = logfile
         self._language = 'off'
@@ -292,11 +298,11 @@ class MlxWhisperProcess:
         if isinstance(data,bytes) and len(data)>0 and self._whisper_process and self._whisper_process.is_alive():
             #print(f"[AUdio]{seq},{typ}")
             self._audio_queue.put(data)
-            self._v_putsz += len(data)
+            self._share_bufsz[0] += len(data)
             time.sleep(0.01)
         try:
-            b = self._v_putsz - self._v_getsz.value
-            if b==0:
+            b = self._share_bufsz[0] - self._share_bufsz[1]
+            if b<=0:
                 return 0
             elif b<1049:
                 return 0.001
@@ -317,7 +323,9 @@ class MlxWhisperProcess:
                 data = self._transcribe_queue.get_nowait()
                 if data is not None:
                     if isinstance(data,tuple):
-                        return data
+                        a,b = data
+                        aa = [ x.text for x in a]
+                        return (aa,b)
                     else:
                         self._transcribe_closed = True
             except Empty:
@@ -329,33 +337,45 @@ class MlxWhisperProcess:
         # start whisper
         if self._whisper_process is None or not self._whisper_process.is_alive():
             print(f"[Whisper]start process")
-            self._v_putsz = 0
-            self._v_getsz.value = 0
-            self._whisper_process = Process(target=self._th_transcribe, name='mlxwhisper', args=(self._v_getsz,self._audio_queue,self._transcribe_queue, self._language, self._logfile))
+            self._share_bufsz[0] = 0
+            self._share_bufsz[1] = 0
+            self._share_bufsz[2] = 0
+            self._share_bufsz[3] = 0
+            try:
+                while True:
+                    self._audio_queue.get_nowait()
+            except:
+                pass
+            self._whisper_process = Process(target=self._th_transcribe, name='mlxwhisper', args=(self._share_id, self._share_bufsz,self._audio_queue,self._transcribe_queue, self._language, self._logfile))
             self._whisper_process.start()
 
     @staticmethod
     def segment_split( previous:list[Seg], current:list[Seg], secs ) ->int:
+        """確定した位置を決定する
+            return: currentで確定したインデックス(インデックス位置を含む)
+        """
         if not isinstance(previous,list) or not isinstance(current,list):
             return -1
         pre_size = len(previous)
         cur_size = len(current)
-        bx = secs-(current[-1].end) if cur_size>0 else 0
-        if bx>1.2:
-            return cur_size-1
         regex = r'[a-zA-Z][.!?][ ]*$'
+        #---step.1
+        tail_blank_sec = secs-(current[-1].end) if cur_size>0 else 0
+        if tail_blank_sec>1.2:
+            return cur_size-1 # テキストの最後と音声の最後が1.2秒あれば、全部確定
+
         if cur_size <=1:
-            return -1
+            return -1 # セグメントが1以下の場合は、確定しない
         elif cur_size==2:
             if re.search(regex,current[0].text):
                 if re.search(regex,current[1].text):
                     if (secs-current[1].end)>0.4:
-                        return 0
+                        return 0 # セグメントが2個の場合、時間感覚が0.4秒以上あれば確定する
             return -1
         else:
-            return cur_size-3
+            return cur_size-3 # セグメントが3個以上あったら、最後の二つ以外は確定
 
-    def _th_transcribe(self,getsz, audio_queue:Queue, stdout:Queue, lang:str, logfile:str|None=None):
+    def _th_transcribe(self,share_id, share_bufsz, audio_queue:Queue, stdout:Queue, lang:str, logfile:str|None=None):
         run:bool = True
         acnt:int = 0
         try:
@@ -388,7 +408,7 @@ class MlxWhisperProcess:
                         else:
                             break
                 except Exception as ex:
-                    pass
+                    traceback.print_exc()
             
             err_thread = Thread( target=to_stderr, name='ffmpeg_stderr', daemon=True )
             err_thread.start()
@@ -418,7 +438,7 @@ class MlxWhisperProcess:
                             elif isinstance(data,bytes) and len(data)>0 :
                                 if seq==0:
                                     print(f"[CP]write data")
-                                getsz.value = getsz.value + len(data)
+                                share_bufsz[1] += len(data)
                                 ffmpeg_process.stdin.write( data )
                                 fname = f'tmp/dump/webm{seq:06d}.webm'
                                 os.makedirs('tmp/dump',exist_ok=True)
@@ -449,12 +469,12 @@ class MlxWhisperProcess:
             #--------------------
             #--------------------
             seg_sec = 1.0
-            seg_size = int( seg_sec * SAMPLE_RATE )
-            read_size = int(seg_size*2)
+            minimum_buf_size = int( seg_sec * SAMPLE_RATE )
             buffer:NDArray[np.float32] = np.zeros( SAMPLE_RATE*30, dtype=np.float32)
             buffer_len:int = 0
             prev_segments:list[Seg] = []
             blanktime = SAMPLE_RATE *0.8
+            read_unit=int(SAMPLE_RATE*0.2)
             #
             while run and ffmpeg_process and ffmpeg_process.stdout:
                 time.sleep(0.01)
@@ -466,47 +486,57 @@ class MlxWhisperProcess:
                 # get audio segment
                 if acnt==0:
                     print(f"[Whisper]wait audio")
-                rz = min(read_size,(len(buffer)-buffer_len)*2)
-                buf:bytes = ffmpeg_process.stdout.read(rz)
+
+                read_frames=0
+                while not ffmpeg_closed and not ffmpeg_process.stdout.closed:
+                    frames=min(read_unit,len(buffer)-buffer_len)
+                    if frames==0:
+                        break
+                    tt=time.time()
+                    buf:bytes = ffmpeg_process.stdout.read(frames*2)
+                    tt=time.time()-tt
+                    # convert bytes to np.ndarray
+                    audio_seg = np.frombuffer(buf,dtype=np.int16).astype(np.float32) / 32768.0
+                    audio_len=len(audio_seg)
+                    read_frames+=audio_len
+                    # add to buffer
+                    buffer[buffer_len:buffer_len+audio_len] = audio_seg
+                    buffer_len+=audio_len
+                    if tt>0.1 and read_frames>=minimum_buf_size:
+                        break
+
                 if acnt==0:
                     print(f"[Whisper]started audio")
                 acnt+=1
-                if len(buf)==0 and not ffmpeg_closed and not ffmpeg_process.stdout.closed:
-                    time.sleep(1.0)
-                    continue
-                if len(buf)>0 and model is not None and lang is not None:
-                    # convert bytes to np.ndarray
-                    audio_seg = np.frombuffer(buf,dtype=np.int16).astype(np.float32) / 32768.0
-                    sz=len(audio_seg)
-                    # add to buffer
-                    buffer[buffer_len:buffer_len+sz] = audio_seg
-                    buffer_len+=sz
-                    # transcrib
-                    prompt = ' '.join( [s.text for s in prev_segments] ) if len(prev_segments)>0 else None
-                    st = time.time()
-                    segments = transcribe(buffer[:buffer_len], model=model,lang=lang, prompt=prompt, logger=logger)
-                    et = time.time()
-                    tt = et-st
-                    seg_sec = int( min(max(1.0,tt+1),10) )
-                    seg_size = int( seg_sec * SAMPLE_RATE )
-                    read_size = int(seg_size*2)
-                else:
-                    segments = []
 
-                out1 = []
-                out2 = []
+                # transcrib
+                prompt = ' '.join( [s.text for s in prev_segments] ) if len(prev_segments)>0 else None
+                trans_sec = time.time()
+                segments = transcribe(buffer[:buffer_len], model=model,lang=lang, prompt=prompt, logger=logger)
+                trans_sec = time.time() - trans_sec
+                buf_sec = buffer_len/SAMPLE_RATE
+                rate = trans_sec/buf_sec
+                if rate>1.0:
+                    print(f"elaps {trans_sec:.1f}/{buf_sec:.1f} = {rate:.2f}")
+
+                out1:list[TextSeg] = []
+                out2:list[str] = []
                 if segments and len(segments)>0:
-                    split = MlxWhisperProcess.segment_split(prev_segments,segments,buffer_len/SAMPLE_RATE)
+                    fixed_pos = MlxWhisperProcess.segment_split(prev_segments,segments,buffer_len/SAMPLE_RATE)
                     logstr = '\n'.join( [f"  {x.json()}" for x in segments])
-                    logger.debug( f"# transcribe results split:{split}\n{logstr}")
+                    logger.debug( f"# transcribe results split:{fixed_pos}\n{logstr}")
 
-                    if split>=0:
-                        for seg in segments[:split+1]:
+                    if fixed_pos>=0:
+                        # 確定したテキストがあれば
+                        for seg in segments[:fixed_pos+1]:
                             seg.isFixed = True
                             logger.info( f"[Text] fix {seg.text}")
-                            out1.append(seg.text)
+                            seq = share_id.value
+                            share_id.value += 1
+                            ts = TextSeg(seq,0.0,1.0,seg.text,b'abc')
+                            out1.append(ts)
                         # 最後の確定セグメントの終了位置（サンプル数）を計算
-                        last_end_sample = int(segments[split].end * SAMPLE_RATE)               
+                        last_end_sample = int(segments[fixed_pos].end * SAMPLE_RATE)               
                         # バッファをシフト
                         remaining_samples = buffer_len - last_end_sample
                         if remaining_samples > 0:
@@ -514,7 +544,7 @@ class MlxWhisperProcess:
                             buffer_len = remaining_samples
                         else:
                             buffer_len = 0
-                        segments = segments[split+1:]
+                        segments = segments[fixed_pos+1:]
                     for seg in segments:
                         logger.info( f"[Text] tmp {seg.text}")
                         out2.append(seg.text)
@@ -523,11 +553,14 @@ class MlxWhisperProcess:
                     # no result
                     for seg in prev_segments:
                         if not seg.isFixed:
-                            out1.append(seg.text)
-                    if buffer_len>(2*seg_size):
-                        x = buffer_len - seg_size
-                        np.copyto( buffer[0:seg_size], buffer[x:buffer_len] )
-                        buffer_len = seg_size
+                            seq = share_id.value
+                            share_id.value += 1
+                            ts = TextSeg(seq,0.0,1.0,seg.text,b'abc')
+                            out1.append(ts)
+                    if buffer_len>minimum_buf_size:
+                        x = buffer_len - minimum_buf_size
+                        np.copyto( buffer[0:minimum_buf_size], buffer[x:buffer_len] )
+                        buffer_len = minimum_buf_size
                 if out1 or out2:
                     stdout.put( (out1,out2) )
                 # 次の比較用に現在のセグメントを保存
