@@ -225,6 +225,9 @@ class UIController {
         this.summaryArea.scrollTop = this.summaryArea.scrollHeight;
     }
 
+    updateStatusForError(err) {
+        console.log('error',err)
+    }
 }
 
 // UIコントローラーのインスタンスを作成してグローバルに公開

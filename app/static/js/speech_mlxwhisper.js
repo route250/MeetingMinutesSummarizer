@@ -169,8 +169,8 @@ class WhisperController {
         const cmd = event['msg']
         const data = event['data']
         if( cmd == 'bufsize' ) {
-            sz = data.get('size')
-            if(sz) {
+            const sz = data['size']
+            if(sz !== undefined ) {
                 window.uiController.updateToUI('bufsize',sz)
             }
         } else if( cmd == 'transcription' ) {

@@ -61,6 +61,7 @@ async def create_app():
             self.mode = 'off'  # デフォルトモード
             self.lang = 'off'  # デフォルト言語
             self._accept_audio:str|None = None
+            self._prev_bufsz:float = 0.0
 
         async def connect(self):
             pass
@@ -109,8 +110,10 @@ async def create_app():
             if self._accept_audio is not None and self._accept_audio!='':
                 return self._accept_audio
             if self.whisper_proc:
-                sz = self.whisper_proc.append_audio(seq,typ,audio)
-                self.send_ev( 'bufsize', {'size': sz} )
+                sz:float = self.whisper_proc.append_audio(seq,typ,audio)
+                if sz != self._prev_bufsz:
+                    self._prev_bufsz = sz
+                    self.send_ev( 'bufsize', {'size': sz} )
             return ''
 
         async def _task_stt(self,aid):

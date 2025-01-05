@@ -9,7 +9,7 @@ from io import BytesIO
 from io import BufferedReader
 import subprocess
 from subprocess import Popen
-from multiprocessing import Process, Manager, Queue
+from multiprocessing import Process, Value, Array, Manager, Queue
 from queue import Empty
 #from multiprocessing.connection import Connection
 import threading
@@ -271,6 +271,8 @@ class MlxWhisperProcess:
     def __init__(self, *, logfile:str|None=None):
         self._transcribe_closed:bool = False
         self._whisper_process = None
+        self._v_putsz:int = 0
+        self._v_getsz = Value('i',0)
         self._transcribe_queue:Queue = Queue()
         self._audio_queue:Queue = Queue()
         self._logfile:str|None = logfile
@@ -286,15 +288,23 @@ class MlxWhisperProcess:
         else:
             print(f"set lang={lang}")
 
-    def append_audio(self, seq:int, typ:str, data: bytes) ->int:
+    def append_audio(self, seq:int, typ:str, data: bytes) ->float:
         if isinstance(data,bytes) and len(data)>0 and self._whisper_process and self._whisper_process.is_alive():
             #print(f"[AUdio]{seq},{typ}")
             self._audio_queue.put(data)
+            self._v_putsz += len(data)
             time.sleep(0.01)
         try:
-            return self._audio_queue.qsize()
+            b = self._v_putsz - self._v_getsz.value
+            if b==0:
+                return 0
+            elif b<1049:
+                return 0.001
+            elif b<1048576:
+                return round( b/1048576, 3 )
+            return round( b/1048576, 1 )
         except:
-            return 0
+            return 0.0
 
     def close_audio(self):
         if self._whisper_process and self._whisper_process.is_alive():
@@ -319,7 +329,9 @@ class MlxWhisperProcess:
         # start whisper
         if self._whisper_process is None or not self._whisper_process.is_alive():
             print(f"[Whisper]start process")
-            self._whisper_process = Process(target=self._th_transcribe, name='mlxwhisper', args=(self._audio_queue,self._transcribe_queue, self._language, self._logfile))
+            self._v_putsz = 0
+            self._v_getsz.value = 0
+            self._whisper_process = Process(target=self._th_transcribe, name='mlxwhisper', args=(self._v_getsz,self._audio_queue,self._transcribe_queue, self._language, self._logfile))
             self._whisper_process.start()
 
     @staticmethod
@@ -343,7 +355,7 @@ class MlxWhisperProcess:
         else:
             return cur_size-3
 
-    def _th_transcribe(self, audio_queue:Queue, stdout:Queue, lang:str, logfile:str|None=None):
+    def _th_transcribe(self,getsz, audio_queue:Queue, stdout:Queue, lang:str, logfile:str|None=None):
         run:bool = True
         acnt:int = 0
         try:
@@ -406,6 +418,7 @@ class MlxWhisperProcess:
                             elif isinstance(data,bytes) and len(data)>0 :
                                 if seq==0:
                                     print(f"[CP]write data")
+                                getsz.value = getsz.value + len(data)
                                 ffmpeg_process.stdin.write( data )
                                 fname = f'tmp/dump/webm{seq:06d}.webm'
                                 os.makedirs('tmp/dump',exist_ok=True)
