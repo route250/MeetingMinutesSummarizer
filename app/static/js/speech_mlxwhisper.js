@@ -345,7 +345,7 @@ class WhisperController {
                 console.log('[mediaRec]stopped')
             };
             // 1秒ごとにデータを取得するように設定
-            this.mediaRecorder.start(1000);
+            this.mediaRecorder.start(200);
 
             if (!this.audioContext) {
                 this.audioContext = new (window.AudioContext || window.webkitAudioContext)();

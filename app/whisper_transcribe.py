@@ -122,7 +122,7 @@ Example Output:
 
 class Seg:
     """transcribeの結果にisFixedフラグを追加したクラス"""
-    def __init__(self, id:int, seek:int, start:float, end:float, text:str, avg_logprob:float, compression_ratio:float, no_speech_prob:float):
+    def __init__(self, id:int, seek:int, start:float, end:float, text:str, avg_logprob:float, compression_ratio:float, no_speech_prob:float, audio:NDArray[np.float32]):
         self.tid:int =id
         self.seek: int = seek
         self.start:float = start
@@ -132,6 +132,7 @@ class Seg:
         self.avg_logprob = avg_logprob
         self.compression_ratio:float = compression_ratio
         self.no_speech_prob:float = no_speech_prob
+        self.audio:NDArray[np.float32] = audio
     def json(self):
         return {'seek': self.seek, 'start':self.start, 'end':self.end, 'isFixed':self.isFixed, 'text': self.text,
                  'prob':self.avg_logprob, 'comp':self.compression_ratio, 'no_speech':self.no_speech_prob }
@@ -168,7 +169,7 @@ class TextSeg(NamedTuple):
     start:float
     end:float
     text:str
-    audio:bytes
+    audio:NDArray[np.float32]
 
 def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_TINY_EN, lang:str='', prompt:str|None=None,logger:Logger|None=None) -> list[Seg]:
 
@@ -188,19 +189,30 @@ def transcribe(audio:np.ndarray, *, model:str=WHISPER_MODEL_TINY_EN, lang:str=''
         t0 = time.time()-t0
         logger.info(f"[transcribe] elaps time {t0:.3f}/{len(audio)/SAMPLE_RATE:.3f}sec")
     segs = result.get("segments") if isinstance(result,dict) else None
+    ret = []
     if isinstance(segs,list):
-        return [
-            Seg( id=seg.get('id'), seek=seg.get('seek'),
-                 start = seg.get('start'), end = seg.get('end'), text = seg.get('text'),
-                 avg_logprob=seg.get('avg_logprob'), compression_ratio=seg.get('compression_ratio'),no_speech_prob=seg.get('no_speech_prob'))
-            for seg in segs if Seg.is_recog_success_dict(seg)
-        ]
-    return []
+        for seg in segs:
+            id=seg.get('id')
+            seek=seg.get('seek')
+            start = seg.get('start')
+            end = seg.get('end')
+            text = seg.get('text')
+            avg_logprob=seg.get('avg_logprob')
+            compression_ratio=seg.get('compression_ratio')
+            no_speech_prob=seg.get('no_speech_prob')
+            if Seg.is_recog_success(text,avg_logprob,compression_ratio,no_speech_prob):
+                s = max(0,int((start-0.1)*SAMPLE_RATE))
+                e = max(int((end+0.1)*SAMPLE_RATE),len(audio))
+                b = audio[s:e].copy()
+                ret.append(Seg(id,seek,start,end,text,avg_logprob,compression_ratio,no_speech_prob,b))
+    else:
+        print(f"ERROR:result={result}")
+    return ret
 
 async def async_ffmpeg() ->SubProcess:
     cmd = "ffmpeg"
     cmdline = [
-            "-err_detect", "ignore_err","-ignore_unknown",
+            "-err_detect", "ignore_err","-ignore_unknown", "-flags", "low_delay",
             "-i", "-",
             "-loglevel", "error",
             "-threads", "0",
@@ -218,7 +230,7 @@ async def async_ffmpeg() ->SubProcess:
 def popen_ffmpeg() ->Popen:
     cmdline = [
             "ffmpeg",
-            "-err_detect", "ignore_err","-ignore_unknown",
+            "-err_detect", "ignore_err","-ignore_unknown", "-flags", "low_delay",
             "-i", "-",
             "-loglevel", "error",
             "-threads", "0",
@@ -228,7 +240,7 @@ def popen_ffmpeg() ->Popen:
             "-ar", str(SAMPLE_RATE),
             "-"
     ]
-    bufsz = 512
+    bufsz = 8192
     ffmpeg_process = Popen(cmdline,bufsize=bufsz,pipesize=bufsz, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return ffmpeg_process
 
@@ -403,7 +415,7 @@ class MlxWhisperProcess:
                         time.sleep(0.01)
                         b = ffmpeg_process.stderr.read()
                         if b: # and not ffmpeg_closed:
-                            print(f"[FFMPEG]{b.docode()}")
+                            print(f"[FFMPEG]{b.decode()}")
                             logger.info(f"[FFMPEG] {b.decode()}")
                         else:
                             break
@@ -488,13 +500,14 @@ class MlxWhisperProcess:
                     print(f"[Whisper]wait audio")
 
                 read_frames=0
+                read_buf_sec = 0.0
                 while not ffmpeg_closed and not ffmpeg_process.stdout.closed:
                     frames=min(read_unit,len(buffer)-buffer_len)
                     if frames==0:
                         break
-                    tt=time.time()
+                    read_buf_sec=time.time()
                     buf:bytes = ffmpeg_process.stdout.read(frames*2)
-                    tt=time.time()-tt
+                    read_buf_sec=time.time()-read_buf_sec
                     # convert bytes to np.ndarray
                     audio_seg = np.frombuffer(buf,dtype=np.int16).astype(np.float32) / 32768.0
                     audio_len=len(audio_seg)
@@ -502,7 +515,7 @@ class MlxWhisperProcess:
                     # add to buffer
                     buffer[buffer_len:buffer_len+audio_len] = audio_seg
                     buffer_len+=audio_len
-                    if tt>0.1 and read_frames>=minimum_buf_size:
+                    if read_frames>=minimum_buf_size and read_buf_sec>0.1:
                         break
 
                 if acnt==0:
@@ -510,14 +523,17 @@ class MlxWhisperProcess:
                 acnt+=1
 
                 # transcrib
-                prompt = ' '.join( [s.text for s in prev_segments] ) if len(prev_segments)>0 else None
-                trans_sec = time.time()
-                segments = transcribe(buffer[:buffer_len], model=model,lang=lang, prompt=prompt, logger=logger)
-                trans_sec = time.time() - trans_sec
-                buf_sec = buffer_len/SAMPLE_RATE
-                rate = trans_sec/buf_sec
-                if rate>1.0:
-                    print(f"elaps {trans_sec:.1f}/{buf_sec:.1f} = {rate:.2f}")
+                if buffer_len>0:
+                    prompt = ' '.join( [s.text for s in prev_segments] ) if len(prev_segments)>0 else None
+                    trans_sec = time.time()
+                    segments = transcribe(buffer[:buffer_len], model=model,lang=lang, prompt=prompt, logger=logger)
+                    trans_sec = time.time() - trans_sec
+                    buf_sec = buffer_len/SAMPLE_RATE
+                    rate = trans_sec/buf_sec
+                    if rate>1.0:
+                        print(f"elaps {trans_sec:.1f}/{buf_sec:.1f} = {rate:.2f} lang:{lang}")
+                else:
+                    segments = []
 
                 out1:list[TextSeg] = []
                 out2:list[str] = []
@@ -533,7 +549,7 @@ class MlxWhisperProcess:
                             logger.info( f"[Text] fix {seg.text}")
                             seq = share_id.value
                             share_id.value += 1
-                            ts = TextSeg(seq,0.0,1.0,seg.text,b'abc')
+                            ts = TextSeg(seq,0.0,1.0,seg.text,seg.audio)
                             out1.append(ts)
                         # 最後の確定セグメントの終了位置（サンプル数）を計算
                         last_end_sample = int(segments[fixed_pos].end * SAMPLE_RATE)               
@@ -555,7 +571,7 @@ class MlxWhisperProcess:
                         if not seg.isFixed:
                             seq = share_id.value
                             share_id.value += 1
-                            ts = TextSeg(seq,0.0,1.0,seg.text,b'abc')
+                            ts = TextSeg(seq,0.0,1.0,seg.text,seg.audio)
                             out1.append(ts)
                     if buffer_len>minimum_buf_size:
                         x = buffer_len - minimum_buf_size
